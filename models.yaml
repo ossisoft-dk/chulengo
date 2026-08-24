@@ -1,0 +1,143 @@
+# Default settings for common model families
+# These can be overridden per-model in model-settings.yaml
+
+defaults:
+  generic:
+    ctx_size: 4096
+    flash_attn: off
+    reasoning: off
+
+  # Qwen models
+  qwen:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  qwen3:
+    ctx_size: 16384
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+
+  qwen35moe:
+    ctx_size: 32768
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+    spec_type: draft
+
+  # Qwen Coder variants (includes Qwen-Coder, Qwopus, etc.)
+  qwancoder:
+    ctx_size: 32768
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+    spec_type: draft
+
+  # Qwopus specific settings
+  qwopus:
+    ctx_size: 204800
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+    spec_type: draft-mtp
+
+  # Llama models
+  llama:
+    ctx_size: 4096
+    flash_attn: on
+    reasoning: off
+
+  llama3:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  llama3_1:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+
+  llama3_2:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+
+  # Gemma models
+  gemma:
+    ctx_size: 4096
+    flash_attn: off
+    reasoning: off
+
+  gemma3:
+    ctx_size: 8192
+    flash_attn: off
+    reasoning: off
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+    spec_type: draft
+
+  # Granite models
+  granite:
+    ctx_size: 4096
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  # GPT-OSS models
+  gpt_oss:
+    ctx_size: 16384
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  # Mistral models
+  mistral:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  # Mixtral models
+  mixtral:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+
+  # Phi models
+  phi:
+    ctx_size: 4096
+    flash_attn: off
+    reasoning: off
+
+  # Code models
+  codestral:
+    ctx_size: 32768
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+
+# Model-specific overrides can be added here
+# This allows for fine-tuning specific models that deviate from family defaults
+model_overrides: {}
