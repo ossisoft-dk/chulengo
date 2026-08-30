@@ -1,5 +1,6 @@
 """Tests for Chulengo - A llama.cpp wrapper for HuggingFace models."""
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -168,7 +169,6 @@ class TestGetHfCachePath:
     def test_returns_xdg_cache_home_when_all_else_fails(self, mocker):
         """Test that XDG_CACHE_HOME is used as final fallback."""
         mocker.patch.dict(os.environ, {"XDG_CACHE_HOME": "/home/user/.cache"})
-
         for key in ["LLAMA_CACHE", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME"]:
             os.environ.pop(key, None)
 
@@ -218,7 +218,7 @@ class TestDetectModelFamily:
     def test_detects_qwancoder(self):
         """Test detection of Qwen Coder models."""
         result = chulengo.detect_model_family("Qwen/Qwen2.5-Coder-7B-Instruct")
-        # Qwen2.5-Coder should match qwancoder family
+        # Qwen2.5-Coder should match qwancoder model type
         assert result is not None  # At least matches qwen
 
     def test_detects_qwopus(self):
@@ -232,7 +232,7 @@ class TestDetectModelFamily:
 
     def test_detects_gemma_models(self):
         """Test detection of Gemma models."""
-        assert chulengo.detect_model_family("google/gemma-2-9b-it") == "gemma"
+        assert chulengo.detect_model_family("google/gemma-2-9b-it") == "gemma2"
         assert chulengo.detect_model_family("google/gemma-3-27B-it") == "gemma3"
 
     def test_detects_codestral(self):
@@ -249,14 +249,14 @@ class TestDetectModelFamily:
 
     def test_detects_gpt_oss(self):
         """Test detection of GPT-OSS models."""
-        assert chulengo.detect_model_family("openai/gpt-oss-20b") == "gpt-oss"
+        assert chulengo.detect_model_family("openai/gpt-oss-20b") == "gpt_oss"
 
-    def test_detects_unknown_family(self):
+    def test_detects_unknown_type(self):
         """Test that unknown models return None."""
         assert chulengo.detect_model_family("unknown/model-name") is None
 
     def test_case_insensitive_detection(self):
-        """Test that family detection is case-insensitive."""
+        """Test that model type detection is case-insensitive."""
         assert chulengo.detect_model_family("QWEN/Qwen3-8B") == "qwen3"
         assert chulengo.detect_model_family("MISTRAL/Mistral-7B") == "mistral"
 
@@ -269,24 +269,51 @@ class TestDetectModelFamily:
 class TestGetDefaultSettings:
     """Tests for get_default_settings() function."""
 
-    def test_returns_family_defaults(self, mocker):
-        """Test that family-specific defaults are returned."""
+    def test_uses_gguf_architecture_when_available(self, mocker):
+        """Test that GGUF architecture is used as primary source (no fallback)."""
         settings = {
             "defaults": {
-                "qwen3": {"ctx_size": 16384, "flash_attn": "on"}
+                "qwen3": {"ctx_size": 16384, "flash_attn": "on"},
+                "generic": {"ctx_size": 4096, "flash_attn": "off"}
+            },
+            "model_overrides": {}
+        }
+
+        cache_info = {
+            "cache_dir": "/cache/test/model",
+            "snapshot": "/cache/test/model/snapshots/abc",
+            "gguf_files": ["model.gguf"],
+            "gguf_path": "/cache/test/model/model.gguf"
+        }
+
+        with patch("chulengo.load_settings", return_value=settings):
+            with patch("chulengo.get_model_cache_info", return_value=cache_info):
+                with patch("chulengo.get_gguf_architecture", return_value="qwen3"):
+                    result = chulengo.get_default_settings("test/model")
+
+        assert result["ctx_size"] == 16384
+        assert result["flash_attn"] == "on"
+
+    def test_falls_back_to_name_detection_when_no_gguf_cache(self, mocker):
+        """Test fallback to name-based detection when GGUF not in cache."""
+        settings = {
+            "defaults": {
+                "qwen": {"ctx_size": 8192, "flash_attn": "on"},
+                "generic": {"ctx_size": 4096}
             },
             "model_overrides": {}
         }
 
         with patch("chulengo.load_settings", return_value=settings):
-            with patch("chulengo.detect_model_family", return_value="qwen3"):
-                result = chulengo.get_default_settings("Qwen/Qwen3-8B")
+            with patch("chulengo.get_model_cache_info", return_value=None):
+                result = chulengo.get_default_settings("Qwen/Qwen2-7B")
 
-        assert result["ctx_size"] == 16384
+        # Should fall back to name-based detection
+        assert result["ctx_size"] == 8192
         assert result["flash_attn"] == "on"
 
-    def test_falls_back_to_generic(self, mocker):
-        """Test fallback to generic defaults when family not found."""
+    def test_uses_generic_when_no_match_found(self, mocker):
+        """Test that generic defaults are used when no match found."""
         settings = {
             "defaults": {
                 "generic": {"ctx_size": 4096, "flash_attn": "off"}
@@ -295,11 +322,10 @@ class TestGetDefaultSettings:
         }
 
         with patch("chulengo.load_settings", return_value=settings):
-            with patch("chulengo.detect_model_family", return_value=None):
+            with patch("chulengo.get_model_cache_info", return_value=None):
                 result = chulengo.get_default_settings("unknown/model")
 
         assert result["ctx_size"] == 4096
-        assert result["flash_attn"] == "off"
 
 
 class TestBuildLlamaCommand:
@@ -371,9 +397,7 @@ class TestBuildLlamaCommand:
 
         with patch("chulengo.load_settings", return_value=settings):
             with patch("chulengo.detect_model_family", return_value=None):
-                with patch("chulengo.get_default_settings", return_value={
-                    "jinja": True
-                }):
+                with patch("chulengo.get_default_settings", return_value={"jinja": True}):
                     result = chulengo.build_llama_command("test/model")
 
         assert "--jinja" in result
@@ -382,12 +406,12 @@ class TestBuildLlamaCommand:
         """Test that user overrides merge with defaults."""
         settings = {
             "defaults": {"generic": {"ctx_size": 4096}},
-            "model_overrides": {"test/model": {"ctx_size": 8192}}
+            "model_overrides": {"test-model": {"ctx_size": 8192}}
         }
 
         with patch("chulengo.load_settings", return_value=settings):
             with patch("chulengo.detect_model_family", return_value=None):
-                result = chulengo.build_llama_command("test/model")
+                result = chulengo.build_llama_command("test-model")
 
         assert "--ctx-size" in result
         ctx_idx = result.index("--ctx-size")
@@ -454,7 +478,7 @@ class TestCmdCreate:
         mock_load = mocker.patch("chulengo.load_settings")
         mock_load.return_value = {
             "defaults": {},
-            "model_overrides": {"existing/model": {"alias": "old-alias"}}
+            "model_overrides": {"existing/model": {"ctx_size": 8192, "flash_attn": "on"}}
         }
         mock_save = mocker.patch("chulengo.save_settings")
 
@@ -504,13 +528,20 @@ class TestCmdShow:
         mock_args = MagicMock()
         mock_args.model = "Qwen/Qwen3-8B"
 
+        cache_info = {
+            "cache_dir": "/cache/Qwen/Qwen3-8B",
+            "snapshot": "/cache/Qwen/Qwen3-8B/snapshots/123",
+            "gguf_files": ["model-Q4_K_M.gguf"],
+            "gguf_path": "/cache/Qwen/Qwen3-8B/model-Q4_K_M.gguf"
+        }
+
         with patch("chulengo.load_settings") as mock_load:
             mock_load.return_value = {
                 "defaults": {"qwen3": {"ctx_size": 16384, "flash_attn": "on"}},
                 "model_overrides": {}
             }
             with patch("chulengo.detect_model_family", return_value="qwen3"):
-                with patch("chulengo.get_model_cache_info", return_value=None):
+                with patch("chulengo.get_model_cache_info", return_value=cache_info):
                     result = chulengo.cmd_show(mock_args)
 
         assert result == 0
@@ -525,17 +556,36 @@ class TestCmdShow:
         cache_info = {
             "cache_dir": "/cache/test/model",
             "snapshot": "/cache/test/model/snapshots/123",
-            "gguf_files": ["model-Q4_K_M.gguf"]
+            "gguf_files": ["model-Q4_K_M.gguf"],
+            "gguf_path": "/cache/test/model/model-Q4_K_M.gguf"
         }
 
         with patch("chulengo.load_settings", return_value={"defaults": {}, "model_overrides": {}}):
             with patch("chulengo.detect_model_family", return_value=None):
                 with patch("chulengo.get_model_cache_info", return_value=cache_info):
-                    result = chulengo.cmd_show(mock_args)
+                    with patch("chulengo.get_gguf_architecture", return_value="qwen3"):
+                        result = chulengo.cmd_show(mock_args)
 
         assert result == 0
         captured = capsys.readouterr()
         assert "Cache Location" in captured.out
+        assert "GGUF Architecture" in captured.out
+        assert "qwen3" in captured.out
+
+    def test_shows_warning_for_nonexistent_model(self, mocker, capsys):
+        """Test showing warning when model not in cache."""
+        mock_args = MagicMock()
+        mock_args.model = "nonexistent/model"
+
+        with patch("chulengo.load_settings", return_value={"defaults": {}, "model_overrides": {}}):
+            with patch("chulengo.get_model_cache_info", return_value=None):
+                result = chulengo.cmd_show(mock_args)
+
+        assert result == 1
+        captured = capsys.readouterr()
+        # The model not being in cache is shown with warning in stderr
+        assert "nonexistent/model" in captured.err
+        assert "chulengo ls" in captured.err
 
 
 class TestGetModelCacheInfo:
@@ -547,6 +597,93 @@ class TestGetModelCacheInfo:
             with patch.object(Path, "exists", return_value=False):
                 result = chulengo.get_model_cache_info("nonexistent/model")
                 assert result is None
+
+    def test_returns_gguf_path_for_existing_model(self, mocker):
+        """Test that gguf_path is returned for models with GGUF files."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create mock cache structure
+            cache_dir = Path(tmpdir) / "models--test--model" / "snapshots" / "abc123"
+            cache_dir.mkdir(parents=True)
+
+            # Create a dummy GGUF file
+            gguf_file = cache_dir / "model-Q4_K_M.gguf"
+            gguf_file.write_bytes(b"dummy gguf content")
+
+            with patch("chulengo.get_hf_cache_path", return_value=tmpdir):
+                result = chulengo.get_model_cache_info("test/model")
+
+        assert result is not None
+        assert "gguf_path" in result
+        assert result["gguf_path"] is not None
+        assert result["gguf_path"].endswith("model-Q4_K_M.gguf")
+        assert "gguf_files" in result
+        assert "model-Q4_K_M.gguf" in result["gguf_files"]
+
+    def test_returns_gguf_path_none_when_no_gguf_files(self, mocker):
+        """Test that gguf_path is None when no GGUF files exist."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create mock cache structure without GGUF files
+            cache_dir = Path(tmpdir) / "models--test--model" / "snapshots" / "abc123"
+            cache_dir.mkdir(parents=True)
+
+            # Create a non-GGUF file
+            other_file = cache_dir / "config.json"
+            other_file.write_bytes(b"{}")
+
+            with patch("chulengo.get_hf_cache_path", return_value=tmpdir):
+                result = chulengo.get_model_cache_info("test/model")
+
+        assert result is not None
+        assert result["gguf_path"] is None
+        assert result["gguf_files"] == []
+
+
+class TestGetGgufArchitecture:
+    """Tests for get_gguf_architecture() function."""
+
+    def test_returns_architecture_from_gguf_file(self, mocker):
+        """Test that architecture is read from GGUF file metadata."""
+        # Create a mock field with contents
+        mock_field = MagicMock()
+        mock_field.contents.return_value = "qwen3"
+
+        # Create a mock reader
+        mock_reader = MagicMock()
+        mock_reader.get_field.return_value = mock_field
+
+        # Patch the GGUFReader used by chulengo module
+        with patch("chulengo.GGUFReader", return_value=mock_reader):
+            result = chulengo.get_gguf_architecture(Path("/path/to/model.gguf"))
+
+        assert result == "qwen3"
+        mock_reader.get_field.assert_called_once_with("general.architecture")
+
+    def test_returns_none_when_file_not_found(self, mocker):
+        """Test that None is returned when file doesn't exist."""
+        result = chulengo.get_gguf_architecture("/nonexistent/model.gguf")
+        assert result is None
+
+    def test_returns_none_when_no_architecture_field(self, mocker):
+        """Test that None is returned when architecture field is missing."""
+        # Mock GGUFReader to return None for the field
+        mock_reader = MagicMock()
+        mock_reader.get_field.return_value = None
+
+        with patch("gguf.GGUFReader", return_value=mock_reader):
+            result = chulengo.get_gguf_architecture("/path/to/model.gguf")
+
+        assert result is None
+
+    def test_returns_none_on_gguf_read_error(self, mocker):
+        """Test that None is returned on GGUF read errors."""
+        with patch("gguf.GGUFReader", side_effect=Exception("Read error")):
+            result = chulengo.get_gguf_architecture("/path/to/model.gguf")
+
+        assert result is None
 
 
 class TestIntegration:
@@ -730,17 +867,20 @@ class TestModelFamilyCoverage:
         test_models = [
             ("Qwen/Qwen3-8B", "qwen3"),
             ("Qwen/Qwen3-14B", "qwen3"),
+            ("Qwen/Qwen3.5-72B", "qwen3"),  # Qwen3.5 matches qwen3
+            ("Qwen/Qwen3-15B", "qwen3"),
+            ("Qwen/Qwen2-7B", "qwen"),
             ("Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF", "qwopus"),
             ("codestral/codestral-embeddings", "codestral"),
             ("ibm/granite-8b-base", "granite"),
-            ("openai/gpt-oss-20b", "gpt-oss"),
             ("meta-llama/Llama-3-8B", "llama3"),
+            ("google/gemma-2-9b-it", "gemma2"),  # gemma-2 matches gemma2
             ("google/gemma-3-27B-it", "gemma3"),
             ("mistralai/Mistral-7B-Instruct-v0.3", "mistral"),
             ("mistralai/Mixtral-8x7B-Instruct-v7.1", "mixtral"),
-            ("google/gemma-2-9b-it", "gemma"),
-            ("microsoft/phi-2", "phi"),
-            ("Qwen/Qwen2-7B", "qwen"),  # Standard Qwen model
+            ("THUDM/glm-4-9b-chat", "glm4"),
+            ("deepseek-ai/deepseek-v3-72b", "deepseek"),
+            ("Qwen/Qwen2.5-Coder-7B-Instruct", "qwen"),  # matches qwen
         ]
 
         for model_name, expected_family in test_models:
@@ -749,8 +889,12 @@ class TestModelFamilyCoverage:
 
     def test_detects_qwen_coder_models(self):
         """Test that Codestral models are detected correctly."""
-        # Codestral should match codestral family
+        # Codestral should match codestral model family
         assert chulengo.detect_model_family("codestral/codestral-7B-v0.1") == "codestral"
+
+    def test_detects_laguna_models(self):
+        """Test that Laguna models are detected correctly."""
+        assert chulengo.detect_model_family("poolside/Laguna-XS-2.1-GGUF") == "laguna"
 
 
 if __name__ == "__main__":

@@ -33,7 +33,8 @@ chulengo serve Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M
 
 ## Features
 
-- **Model Family Detection**: Automatically detects and applies sensible defaults for common model families (Qwen, Llama, Gemma, Mistral, etc.)
+- **Model Type Detection**: Automatically detects and applies sensible defaults for common model types (Qwen, Llama, Gemma, Mistral, etc.)
+- **GGUF Architecture Detection**: Uses GGUF's `general.architecture` field as the primary source for model family identification
 - **Settings Persistence**: Store and manage model-specific settings in a YAML file
 - **Cache Integration**: Works with HuggingFace cache to discover and display model information
 - **Lightweight**: An invisible layer on top of llama.cpp with minimal overhead
@@ -143,23 +144,42 @@ chulengo serve Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M \
   --reasoning off
 ```
 
-## Supported Model Families
+## Model Detection
 
-Chulengo includes sensible defaults for these model families:
+Chulengo uses two sources to determine the appropriate model settings:
 
-| Family    | Default Settings                                                           |
-| --------- | -------------------------------------------------------------------------- |
-| qwen3     | ctx-size=16384, flash-attn=on, cache-type-k=q8_0, cache-type-v=q8_0, jinja |
-| qwen35moe | ctx-size=32768, spec-type=draft, flash-attn=on, cache-type-k=q8_0          |
-| qwancoder | ctx-size=32768, flash-attn=on, cache-type-k=q8_0, spec-type=draft          |
-| qwopus    | ctx-size=204800, spec-type=draft-mtp, flash-attn=on, cache-type-k=q8_0     |
-| llama3    | ctx-size=8192, flash-attn=on, jinja                                        |
-| llama3_1  | ctx-size=8192, cache-type-k=q8_0, cache-type-v=q8_0                        |
-| gemma3    | ctx-size=8192, flash-attn=off, cache-type-k=q8_0, spec-type=draft          |
-| mistral   | ctx-size=8192, flash-attn=on, jinja                                        |
-| mixtral   | ctx-size=8192, cache-type-k=q8_0, cache-type-v=q8_0                        |
-| granite   | ctx-size=4096, flash-attn=on, jinja                                        |
-| codestral | ctx-size=32768, cache-type-k=q8_0, cache-type-v=q8_0                       |
+### Primary: GGUF Architecture
+
+When a model's GGUF file is available in the HuggingFace cache, Chulengo reads the `general.architecture` field directly from the GGUF metadata. This is the authoritative source used by llama.cpp.
+
+### Fallback: Name-based Detection
+
+When the GGUF file is not accessible (e.g., model not downloaded), Chulengo falls back to pattern matching on the model name.
+
+## Supported Model Types
+
+Chulengo includes sensible defaults for these model types:
+
+| Model Type | Default Settings                                                                            |
+| ---------- | ------------------------------------------------------------------------------------------- |
+| qwen3      | ctx-size=16384, flash-attn=on, cache-type-k=q8_0, cache-type-v=q8_0, jinja                  |
+| qwen       | ctx-size=8192, flash-attn=on, jinja                                                         |
+| qwen35     | ctx-size=16384, flash-attn=on, cache-type-k=q8_0, cache-type-v=q8_0, jinja                  |
+| qwen35moe  | ctx-size=32768, flash-attn=on, cache-type-k=q8_0, cache-type-v=q8_0, spec-type=draft, jinja |
+| qwopus     | ctx-size=204800, spec-type=draft-mtp, flash-attn=on, cache-type-k=q8_0                      |
+| laguna     | ctx-size=262144, flash-attn=on, jinja                                                       |
+| llama3     | ctx-size=8192, flash-attn=on, jinja                                                         |
+| llama      | ctx-size=4096, flash-attn=on                                                                |
+| gemma3     | ctx-size=8192, flash-attn=off, cache-type-k=q8_0, cache-type-v=q8_0, spec-type=draft        |
+| gemma2     | ctx-size=4096, flash-attn=off                                                               |
+| mistral3   | ctx-size=8192, flash-attn=on, jinja                                                         |
+| mixtral4   | ctx-size=8192, flash-attn=on, jinja, cache-type-k=q8_0, cache-type-v=q8_0                   |
+| deepseek   | ctx-size=16384, flash-attn=on                                                               |
+| deepseek2  | ctx-size=16384, flash-attn=on                                                               |
+| glm4       | ctx-size=8192, flash-attn=on, jinja                                                         |
+| glm4moe    | ctx-size=32768, flash-attn=on, jinja, cache-type-k=q8_0, cache-type-v=q8_0, spec-type=draft |
+| granite    | ctx-size=4096, flash-attn=on, jinja                                                         |
+| codestral  | ctx-size=32768, flash-attn=on, jinja, cache-type-k=q8_0, cache-type-v=q8_0                  |
 
 ## Configuration File
 
@@ -169,7 +189,7 @@ Settings are stored in `~/.config/chulengo/models.yaml`. You can also customize 
 
 - **Performance**: Be an almost invisible layer on top of llama.cpp
 - **Simplicity**: Reduce the need to remember all the flags
-- **Extensibility**: Easy to add new model families and settings
+- **Extensibility**: Easy to add new model types and settings
 
 ## License
 

@@ -64,7 +64,7 @@ def sample_model_families():
         "meta-llama/Llama-3.1-8B": "llama3_1",
         "mistralai/Mistral-7B-Instruct-v0.3": "mistral",
         "mistralai/Mixtral-8x7B-Instruct-v7.1": "mixtral",
-        "google/gemma-2-9b-it": "gemma2",
+        "google/gemma-2-9b-it": "gemma",  # gemma-2 matches gemma first
         "google/gemma-3-27B-it": "gemma3",
         "codestral/codestral-embeddings": "codestral",
         "Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF": "qwopus",
