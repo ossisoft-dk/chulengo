@@ -18,3 +18,8 @@ env/
 
 # Generated files
 output*
+
+# Egg files from pip install
+*.egg
+*.egg-info/
+dist-info/
