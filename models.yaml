@@ -1,5 +1,6 @@
 # Default settings for common model families
-# These can be overridden per-model in model-settings.yaml
+# Model families are identified by GGUF general.architecture field when available
+# Name-based detection is used as fallback when GGUF metadata is not accessible
 
 defaults:
   generic:
@@ -22,6 +23,14 @@ defaults:
     cache_type_k: q8_0
     cache_type_v: q8_0
 
+  qwen35:
+    ctx_size: 16384
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+
   qwen35moe:
     ctx_size: 32768
     flash_attn: on
@@ -31,7 +40,6 @@ defaults:
     cache_type_v: q8_0
     spec_type: draft
 
-  # Qwen Coder variants (includes Qwen-Coder, Qwopus, etc.)
   qwancoder:
     ctx_size: 32768
     flash_attn: on
@@ -39,19 +47,27 @@ defaults:
     jinja: on
     cache_type_k: q8_0
     cache_type_v: q8_0
-    spec_type: draft
 
-  # Qwopus specific settings
+  qwencoder:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
   qwopus:
     ctx_size: 204800
     flash_attn: on
     reasoning: off
-    jinja: on
     cache_type_k: q8_0
     cache_type_v: q8_0
-    spec_type: draft-mtp
 
-  # Llama models
+  gpt_oss:
+    ctx_size: 16384
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  # Llama models (older mistral/mixtral use llama architecture)
   llama:
     ctx_size: 4096
     flash_attn: on
@@ -85,6 +101,11 @@ defaults:
     flash_attn: off
     reasoning: off
 
+  gemma2:
+    ctx_size: 4096
+    flash_attn: off
+    reasoning: off
+
   gemma3:
     ctx_size: 8192
     flash_attn: off
@@ -100,22 +121,66 @@ defaults:
     reasoning: off
     jinja: on
 
-  # GPT-OSS models
-  gpt_oss:
-    ctx_size: 16384
+  granitemoe:
+    ctx_size: 4096
     flash_attn: on
     reasoning: off
     jinja: on
 
-  # Mistral models
-  mistral:
+  granitemoeshared:
+    ctx_size: 4096
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  # Deepseek models
+  deepseek:
+    ctx_size: 16384
+    flash_attn: on
+    reasoning: off
+
+  deepseek2:
+    ctx_size: 16384
+    flash_attn: on
+    reasoning: off
+
+  # GLM models
+  glm4:
     ctx_size: 8192
     flash_attn: on
     reasoning: off
     jinja: on
 
-  # Mixtral models
-  mixtral:
+  glm4moe:
+    ctx_size: 32768
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+    spec_type: draft
+
+  # Nemotron models
+  nemotron:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  nemotron_h:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  # Mistral models (mistral3 = new Mistral, mistral4 = new Mixtral)
+  mistral3:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  mistral4:
     ctx_size: 8192
     flash_attn: on
     reasoning: off
@@ -123,13 +188,14 @@ defaults:
     cache_type_k: q8_0
     cache_type_v: q8_0
 
-  # Phi models
-  phi:
-    ctx_size: 4096
-    flash_attn: off
+  # Laguna models (MoE)
+  laguna:
+    ctx_size: 262144
+    flash_attn: on
     reasoning: off
+    jinja: on
 
-  # Code models
+  # Codestral models
   codestral:
     ctx_size: 32768
     flash_attn: on
@@ -139,5 +205,4 @@ defaults:
     cache_type_v: q8_0
 
 # Model-specific overrides can be added here
-# This allows for fine-tuning specific models that deviate from family defaults
 model_overrides: {}

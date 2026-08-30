@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from gguf import GGUFReader
 
 
 # Default settings file path
@@ -65,6 +66,29 @@ def get_hf_cache_path() -> str | None:
     return os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "huggingface", "hub")
 
 
+def get_gguf_architecture(gguf_path: Path) -> str | None:
+    """Read model architecture from GGUF file metadata.
+
+    Uses general.architecture from GGUF metadata, which provides
+    the authoritative model family identifier used by llama.cpp.
+
+    Args:
+        gguf_path: Path to the GGUF file
+
+    Returns:
+        The architecture string directly (e.g., "qwen3", "llama", "gemma3")
+        or None if the file cannot be read or architecture field is missing.
+    """
+    try:
+        reader = GGUFReader(str(gguf_path))
+        field = reader.get_field("general.architecture")
+        if field:
+            return field.contents()
+    except Exception:
+        pass
+    return None
+
+
 def detect_model_family(model_name: str) -> str | None:
     """Detect the model family from the model name."""
     model_lower = model_name.lower()
@@ -72,7 +96,8 @@ def detect_model_family(model_name: str) -> str | None:
     # Order matters - check more specific family names first
     families = [
         "qwen35moe",
-        "gpt-oss",
+        "qwen35",
+        "gpt_oss",
         "qwancoder",
         "qwopus",  # Explicit check for qwopus before qwen
         "codestral",
@@ -82,12 +107,25 @@ def detect_model_family(model_name: str) -> str | None:
         "llama",
         "qwen3",
         "qwen",
+        "laguna",
         "mixtral",
         "mistral",
+        "mistral3",
+        "mistral4",  # new Mixtral uses mistral4 architecture
+        "glm4moe",
+        "glm4",
         "gemma3",
+        "gemma2",
         "gemma",
+        "granitemoe",
         "granite",
+        "granitemoeshared",
         "phi",
+        "deepseek2",
+        "deepseek",
+        "nemotron_h",
+        "nemotron",
+        "qwencoder",
     ]
 
     for family in families:
@@ -115,11 +153,22 @@ def detect_model_family(model_name: str) -> str | None:
 
 
 def get_default_settings(model_name: str) -> dict:
-    """Get default settings for a model based on its family."""
+    """Get default settings for a model based on its family.
+
+    Uses GGUF architecture from file metadata as primary source (no fallback).
+    Falls back to name-based detection only when GGUF file is not accessible.
+    """
     settings = load_settings()
     defaults = settings.get("defaults", {})
 
-    # Try to detect family from model name
+    # Priority 1: Try to get architecture from GGUF file metadata
+    cache_info = get_model_cache_info(model_name)
+    if cache_info and cache_info.get("gguf_path"):
+        gguf_architecture = get_gguf_architecture(Path(cache_info["gguf_path"]))
+        if gguf_architecture and gguf_architecture in defaults:
+            return defaults[gguf_architecture].copy()
+
+    # Priority 2: Detect family from model name (for models without GGUF in cache)
     family = detect_model_family(model_name)
 
     if family and family in defaults:
@@ -162,10 +211,14 @@ def get_model_cache_info(model_name: str) -> dict | None:
     gguf_files = list(latest_snapshot.glob("*.gguf"))
     gguf_files = [f for f in gguf_files if not f.name.startswith("mmproj")]
 
+    # Get the first GGUF file path for metadata reading (if available)
+    gguf_path = str(gguf_files[0]) if gguf_files else None
+
     return {
         "cache_dir": str(model_cache_dir),
         "snapshot": str(latest_snapshot),
         "gguf_files": [f.name for f in gguf_files],
+        "gguf_path": gguf_path,
     }
 
 
@@ -227,22 +280,37 @@ def cmd_show(args: argparse.Namespace) -> int:
     # Get cache info (optional - model might not be downloaded yet)
     cache_info = get_model_cache_info(model_name)
 
+    # Show warning if model not in cache
+    if not cache_info:
+        print(
+            f"Warning: Model '{model_name}' is not available in the HuggingFace cache.",
+            file=sys.stderr,
+        )
+        print("Use 'chulengo ls' to list available models.", file=sys.stderr)
+        return 1
+
     # Build display info
     print(f"Model: {model_name}")
 
-    if cache_info:
-        print(f"\nCache Location:")
-        print(f"  Repository: {cache_info['cache_dir']}")
-        print(f"  Snapshot: {cache_info['snapshot']}")
+    print(f"\nCache Location:")
+    print(f"  Repository: {cache_info['cache_dir']}")
+    print(f"  Snapshot: {cache_info['snapshot']}")
 
-        print(f"\nAvailable GGUF files:")
-        for gguf in cache_info["gguf_files"]:
-            print(f"  - {gguf}")
+    print(f"\nAvailable GGUF files:")
+    for gguf in cache_info["gguf_files"]:
+        print(f"  - {gguf}")
+
+    # Show GGUF architecture from metadata
+    if cache_info.get("gguf_path"):
+        gguf_arch = get_gguf_architecture(Path(cache_info["gguf_path"]))
+        if gguf_arch:
+            print(f"\nGGUF Architecture: {gguf_arch}")
 
     # Detect family and show settings
     family = detect_model_family(model_name)
     if family:
         print(f"\nDetected family: {family}")
+        print()
         defaults = settings.get("defaults", {})
         if family in defaults:
             print(f"Default settings for {family}:")

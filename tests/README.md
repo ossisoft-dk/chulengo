@@ -64,29 +64,30 @@ pytest tests/ --cov=chulengo --cov-report=html
 tests/
 ├── __init__.py           # Package marker
 ├── conftest.py           # Shared pytest fixtures
-├── test_chulengo.py      # Main test file (54 tests)
+├── test_chulengo.py      # Main test file (63 tests)
 └── README.md             # This file
 ```
 
 ## Test Classes
 
-| Class                             | Tests | Description                           |
-| --------------------------------- | ----- | ------------------------------------- |
-| `TestLoadSettings`                | 4     | Tests for loading settings from YAML  |
-| `TestSaveSettings`                | 2     | Tests for saving settings to config   |
-| `TestGetHfCachePath`              | 7     | Tests for HF cache path detection     |
-| `TestDetectModelFamily`           | 11    | Tests for model family detection      |
-| `TestGetDefaultSettings`          | 2     | Tests for default settings retrieval  |
-| `TestBuildLlamaCommand`           | 9     | Tests for command building            |
-| `TestBuildLlamaCommandAdditional` | 4     | Additional command building tests     |
-| `TestCmdCreate`                   | 2     | Tests for create CLI command          |
-| `TestCmdDelete`                   | 2     | Tests for delete CLI command          |
-| `TestCmdShow`                     | 2     | Tests for show CLI command            |
-| `TestCmdUpdate`                   | 2     | Tests for update CLI command          |
-| `TestCmdLs`                       | 2     | Tests for ls CLI command              |
-| `TestGetModelCacheInfo`           | 1     | Tests for cache info retrieval        |
-| `TestIntegration`                 | 1     | End-to-end workflow tests             |
-| `TestModelFamilyCoverage`         | 2     | Coverage tests for all model families |
+| Class                             | Tests | Description                          |
+| --------------------------------- | ----- | ------------------------------------ |
+| `TestLoadSettings`                | 4     | Tests for loading settings from YAML |
+| `TestSaveSettings`                | 2     | Tests for saving settings to config  |
+| `TestGetHfCachePath`              | 7     | Tests for HF cache path detection    |
+| `TestDetectModelFamily`           | 12    | Tests for model family detection     |
+| `TestGetDefaultSettings`          | 3     | Tests for default settings retrieval |
+| `TestBuildLlamaCommand`           | 9     | Tests for command building           |
+| `TestBuildLlamaCommandAdditional` | 4     | Additional command building tests    |
+| `TestCmdCreate`                   | 2     | Tests for create CLI command         |
+| `TestCmdDelete`                   | 2     | Tests for delete CLI command         |
+| `TestCmdShow`                     | 3     | Tests for show CLI command           |
+| `TestCmdUpdate`                   | 2     | Tests for update CLI command         |
+| `TestCmdLs`                       | 2     | Tests for ls CLI command             |
+| `TestGetModelCacheInfo`           | 3     | Tests for cache info retrieval       |
+| `TestGetGgufArchitecture`         | 4     | Tests for GGUF architecture reading  |
+| `TestIntegration`                 | 1     | End-to-end workflow tests            |
+| `TestModelFamilyCoverage`         | 3     | Coverage tests for all model types   |
 
 ## Test Features
 
@@ -97,7 +98,7 @@ The test suite uses `pytest-mock` to mock:
 - **File I/O**: `Path.exists()`, `Path.glob()`, file reads/writes
 - **Environment variables**: `os.environ` for cache path detection
 - **Subprocess calls**: `subprocess.Popen` for command execution
-- **External dependencies**: HuggingFace cache paths
+- **External dependencies**: HuggingFace cache paths, GGUFReader
 
 ### Fixtures
 
@@ -106,20 +107,19 @@ The `conftest.py` file provides reusable fixtures:
 - `default_settings_content` - YAML content for default settings
 - `mock_filesystem` - Mocked filesystem operations
 - `sample_model_names` - Sample model names for testing
-- `sample_model_families` - Mapping of models to expected families
+- `sample_model_types` - Mapping of models to expected types
 
-## Model Families Tested
+## Model Types Tested
 
-All model families from `models.yaml` are tested:
+All model types from `models.yaml` are tested:
 
 - qwen3, qwancoder, qwopus
 - codestral
 - llama3, llama3_1, llama3_2, llama
 - gemma, gemma3
 - mistral, mixtral
-- granite
-- phi
-- gpt-oss
+- granite, glm4
+- deepseek, deepseek2
 
 ## Continuous Integration
 
