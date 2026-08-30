@@ -118,7 +118,7 @@ def extract_gguf_metadata(gguf_path: Path) -> dict | None:
     result: dict[str, Any] = {
         "architecture": architecture,
         "parameter_count": param_count,
-        "parameter_count_formatted": model_weight_count_rounded_notation(param_count),
+        "parameter_count_formatted": model_weight_count_rounded_notation(param_count, min_digits=3),
     }
 
     # Extract LLM fields (architecture-specific)
@@ -151,40 +151,12 @@ def extract_gguf_metadata(gguf_path: Path) -> dict | None:
     )
 
     # Extract general metadata
-    for field_name in ["name", "finetune", "description", "author", "version"]:
+    for field_name in ["name", "basename", "finetune", "description", "author", "version"]:
         field = reader.get_field(f"general.{field_name}")
         if field:
             result[f"general_{field_name}"] = field.contents()
 
     return result
-
-
-def is_mmproj_file(gguf_path: Path) -> bool:
-    """Check if this is an mmproj (multimodal projection) file.
-
-    Mmproj files are multimodal projection files that contain
-    vision/audio encoder weights for models like CLIP.
-
-    Args:
-        gguf_path: Path to the GGUF file
-
-    Returns:
-        True if this is an mmproj file
-    """
-    if gguf_path.name.startswith("mmproj"):
-        return True
-
-    try:
-        reader = GGUFReader(str(gguf_path))
-        arch_field = reader.get_field("general.architecture")
-        if arch_field:
-            arch = arch_field.contents()
-            if arch == "clip":
-                return True
-    except Exception:
-        pass
-
-    return False
 
 
 def detect_model_family(model_name: str) -> str | None:
@@ -305,18 +277,25 @@ def get_model_cache_info(model_name: str) -> dict | None:
 
     latest_snapshot = max(snapshots, key=lambda p: p.stat().st_mtime)
 
-    # Find GGUF files (skip mmproj files)
-    gguf_files = list(latest_snapshot.glob("*.gguf"))
-    gguf_files = [f for f in gguf_files if not f.name.startswith("mmproj")]
+    # Find GGUF files and separate mmproj files
+    all_gguf_files = list(latest_snapshot.glob("*.gguf"))
+    # Separate into regular GGUF files and mmproj files
+    gguf_files = [f for f in all_gguf_files if not f.name.startswith("mmproj")]
+    mmproj_files = [f for f in all_gguf_files if f.name.startswith("mmproj")]
 
     # Get the first GGUF file path for metadata reading (if available)
     gguf_path = str(gguf_files[0]) if gguf_files else None
+
+    # Get the first mmproj file path if available
+    mmproj_path = str(mmproj_files[0]) if mmproj_files else None
 
     return {
         "cache_dir": str(model_cache_dir),
         "snapshot": str(latest_snapshot),
         "gguf_files": [f.name for f in gguf_files],
         "gguf_path": gguf_path,
+        "mmproj_files": [f.name for f in mmproj_files],
+        "mmproj_path": mmproj_path,
     }
 
 
@@ -396,7 +375,7 @@ def cmd_show(args: argparse.Namespace) -> int:
 
     print(f"\nAvailable GGUF files:")
     for gguf in cache_info["gguf_files"]:
-        print(f"  - {gguf}")
+        print(f"  {gguf}")
 
     # Extract and display GGUF metadata
     if cache_info.get("gguf_path"):
@@ -407,25 +386,42 @@ def cmd_show(args: argparse.Namespace) -> int:
             print(f"  Parameters: {metadata.get('parameter_count_formatted', 'unknown')}")
 
             # Show multimodal capabilities
-            is_multimodal = metadata.get("is_multimodal", False)
-            print(f"\nMultimodal: {'Yes' if is_multimodal else 'No'}")
+            # Multimodal can be detected from GGUF metadata OR from mmproj files
+            # Extract metadata from mmproj file if available to check for vision/audio encoders
+            mmproj_metadata = None
+            if cache_info.get("mmproj_path"):
+                mmproj_metadata = extract_gguf_metadata(Path(cache_info["mmproj_path"]))
+
+            # Merge multimodal info from both sources
+            has_vision_encoder = metadata.get("has_vision_encoder") or (
+                mmproj_metadata and mmproj_metadata.get("has_vision_encoder")
+            )
+            has_audio_encoder = metadata.get("has_audio_encoder") or (
+                mmproj_metadata and mmproj_metadata.get("has_audio_encoder")
+            )
+            is_multimodal = bool(has_vision_encoder or has_audio_encoder)
+
+            print(f"\n  Multimodal: {'Yes' if is_multimodal else 'No'}")
 
             if is_multimodal:
-                if metadata.get("has_vision_encoder"):
-                    print("  - Vision encoder: Yes")
-                if metadata.get("has_audio_encoder"):
-                    print("  - Audio encoder: Yes")
+                if has_vision_encoder:
+                    print("    Vision encoder: Yes")
+                if has_audio_encoder:
+                    print("    Audio encoder: Yes")
+                # Show mmproj files if they exist (indicates multimodal capability)
+                if cache_info.get("mmproj_files"):
+                    print(f"    Multimodal projection files: {', '.join(cache_info['mmproj_files'])}")
 
             # Show architecture-specific details
             arch_details = []
             if "vocab_size" in metadata:
-                arch_details.append(f"  Vocab size: {metadata['vocab_size']:,}")
+                arch_details.append(f"    Vocab size: {metadata['vocab_size']:,}")
             if "context_length" in metadata:
-                arch_details.append(f"  Context length: {metadata['context_length']:,}")
+                arch_details.append(f"    Context length: {metadata['context_length']:,}")
             if "embedding_length" in metadata:
-                arch_details.append(f"  Embedding length: {metadata['embedding_length']:,}")
+                arch_details.append(f"    Embedding length: {metadata['embedding_length']:,}")
             if "block_count" in metadata:
-                arch_details.append(f"  Number of layers: {metadata['block_count']}")
+                arch_details.append(f"    Number of layers: {metadata['block_count']}")
 
             if arch_details:
                 print(f"\n  Architecture Details:")
@@ -435,35 +431,37 @@ def cmd_show(args: argparse.Namespace) -> int:
             # Show tokenizer info
             tokenizer_info = []
             if "tokenizer_model" in metadata:
-                tokenizer_info.append(f"    Model: {metadata['tokenizer_model']}")
+                tokenizer_info.append(f"  Model: {metadata['tokenizer_model']}")
             if "tokenizer_pre" in metadata:
-                tokenizer_info.append(f"    Pre: {metadata['tokenizer_pre']}")
+                tokenizer_info.append(f"  Pre: {metadata['tokenizer_pre']}")
             if "tokenizer_bos_id" in metadata:
-                tokenizer_info.append(f"    BOS token ID: {metadata['tokenizer_bos_id']}")
+                tokenizer_info.append(f"  BOS token ID: {metadata['tokenizer_bos_id']}")
             if "tokenizer_eos_id" in metadata:
-                tokenizer_info.append(f"    EOS token ID: {metadata['tokenizer_eos_id']}")
+                tokenizer_info.append(f"  EOS token ID: {metadata['tokenizer_eos_id']}")
 
             if tokenizer_info:
                 print(f"\n  Tokenizer:")
                 for info in tokenizer_info:
-                    print(info)
+                    print(f"  {info}")
 
             # Show general metadata if available
             general_info = []
             if metadata.get("general_name"):
-                general_info.append(f"    Name: {metadata['general_name']}")
+                general_info.append(f"  Name: {metadata['general_name']}")
             if metadata.get("general_finetune"):
-                general_info.append(f"    Finetune: {metadata['general_finetune']}")
+                general_info.append(f"  Finetune: {metadata['general_finetune']}")
+            if metadata.get("general_basename"):
+                general_info.append(f"  Base model: {metadata['general_basename']}")
             if metadata.get("general_description"):
                 desc = metadata['general_description']
                 if len(desc) > 100:
                     desc = desc[:100] + "..."
-                general_info.append(f"    Description: {desc}")
+                general_info.append(f"  Description: {desc}")
 
             if general_info:
                 print(f"\n  Model Info:")
                 for info in general_info:
-                    print(info)
+                    print(f"  {info}")
 
     # Detect family and show settings
     family = detect_model_family(model_name)
