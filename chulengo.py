@@ -16,6 +16,7 @@ from typing import Any
 
 import yaml
 from gguf import GGUFReader
+from gguf.utility import model_weight_count_rounded_notation
 
 
 # Default settings file path
@@ -87,6 +88,103 @@ def get_gguf_architecture(gguf_path: Path) -> str | None:
     except Exception:
         pass
     return None
+
+
+def extract_gguf_metadata(gguf_path: Path) -> dict | None:
+    """Extract comprehensive GGUF metadata in a single pass.
+
+    Reads all tensor metadata (for parameter count) and key metadata fields
+    without loading actual tensor data into memory.
+
+    Args:
+        gguf_path: Path to the GGUF file
+
+    Returns:
+        Dictionary with extracted metadata or None if file cannot be read
+    """
+    try:
+        reader = GGUFReader(str(gguf_path))
+    except Exception:
+        return None
+
+    # Calculate parameter count from tensors
+    # Note: n_elements is pre-computed, no need to access tensor data
+    param_count = sum(tensor.n_elements for tensor in reader.tensors)
+
+    # Get architecture
+    arch_field = reader.get_field("general.architecture")
+    architecture = arch_field.contents() if arch_field else None
+
+    result: dict[str, Any] = {
+        "architecture": architecture,
+        "parameter_count": param_count,
+        "parameter_count_formatted": model_weight_count_rounded_notation(param_count),
+    }
+
+    # Extract LLM fields (architecture-specific)
+    if architecture:
+        arch_fields = {
+            "vocab_size": f"{architecture}.vocab_size",
+            "context_length": f"{architecture}.context_length",
+            "embedding_length": f"{architecture}.embedding_length",
+            "block_count": f"{architecture}.block_count",
+        }
+        for key, field_name in arch_fields.items():
+            field = reader.get_field(field_name)
+            if field:
+                result[key] = field.contents()
+
+    # Extract tokenizer info
+    for field_name in ["model", "pre", "bos_id", "eos_id"]:
+        field = reader.get_field(f"tokenizer.ggml.{field_name}")
+        if field:
+            result[f"tokenizer_{field_name}"] = field.contents()
+
+    # Extract multimodal info
+    for encoder_type in ["vision", "audio"]:
+        field = reader.get_field(f"clip.has_{encoder_type}_encoder")
+        if field:
+            result[f"has_{encoder_type}_encoder"] = field.contents()
+
+    result["is_multimodal"] = bool(
+        result.get("has_vision_encoder") or result.get("has_audio_encoder")
+    )
+
+    # Extract general metadata
+    for field_name in ["name", "finetune", "description", "author", "version"]:
+        field = reader.get_field(f"general.{field_name}")
+        if field:
+            result[f"general_{field_name}"] = field.contents()
+
+    return result
+
+
+def is_mmproj_file(gguf_path: Path) -> bool:
+    """Check if this is an mmproj (multimodal projection) file.
+
+    Mmproj files are multimodal projection files that contain
+    vision/audio encoder weights for models like CLIP.
+
+    Args:
+        gguf_path: Path to the GGUF file
+
+    Returns:
+        True if this is an mmproj file
+    """
+    if gguf_path.name.startswith("mmproj"):
+        return True
+
+    try:
+        reader = GGUFReader(str(gguf_path))
+        arch_field = reader.get_field("general.architecture")
+        if arch_field:
+            arch = arch_field.contents()
+            if arch == "clip":
+                return True
+    except Exception:
+        pass
+
+    return False
 
 
 def detect_model_family(model_name: str) -> str | None:
@@ -300,11 +398,72 @@ def cmd_show(args: argparse.Namespace) -> int:
     for gguf in cache_info["gguf_files"]:
         print(f"  - {gguf}")
 
-    # Show GGUF architecture from metadata
+    # Extract and display GGUF metadata
     if cache_info.get("gguf_path"):
-        gguf_arch = get_gguf_architecture(Path(cache_info["gguf_path"]))
-        if gguf_arch:
-            print(f"\nGGUF Architecture: {gguf_arch}")
+        metadata = extract_gguf_metadata(Path(cache_info["gguf_path"]))
+        if metadata:
+            print(f"\nGGUF Metadata:")
+            print(f"  Architecture: {metadata.get('architecture', 'unknown')}")
+            print(f"  Parameters: {metadata.get('parameter_count_formatted', 'unknown')}")
+
+            # Show multimodal capabilities
+            is_multimodal = metadata.get("is_multimodal", False)
+            print(f"\nMultimodal: {'Yes' if is_multimodal else 'No'}")
+
+            if is_multimodal:
+                if metadata.get("has_vision_encoder"):
+                    print("  - Vision encoder: Yes")
+                if metadata.get("has_audio_encoder"):
+                    print("  - Audio encoder: Yes")
+
+            # Show architecture-specific details
+            arch_details = []
+            if "vocab_size" in metadata:
+                arch_details.append(f"  Vocab size: {metadata['vocab_size']:,}")
+            if "context_length" in metadata:
+                arch_details.append(f"  Context length: {metadata['context_length']:,}")
+            if "embedding_length" in metadata:
+                arch_details.append(f"  Embedding length: {metadata['embedding_length']:,}")
+            if "block_count" in metadata:
+                arch_details.append(f"  Number of layers: {metadata['block_count']}")
+
+            if arch_details:
+                print(f"\n  Architecture Details:")
+                for detail in arch_details:
+                    print(detail)
+
+            # Show tokenizer info
+            tokenizer_info = []
+            if "tokenizer_model" in metadata:
+                tokenizer_info.append(f"    Model: {metadata['tokenizer_model']}")
+            if "tokenizer_pre" in metadata:
+                tokenizer_info.append(f"    Pre: {metadata['tokenizer_pre']}")
+            if "tokenizer_bos_id" in metadata:
+                tokenizer_info.append(f"    BOS token ID: {metadata['tokenizer_bos_id']}")
+            if "tokenizer_eos_id" in metadata:
+                tokenizer_info.append(f"    EOS token ID: {metadata['tokenizer_eos_id']}")
+
+            if tokenizer_info:
+                print(f"\n  Tokenizer:")
+                for info in tokenizer_info:
+                    print(info)
+
+            # Show general metadata if available
+            general_info = []
+            if metadata.get("general_name"):
+                general_info.append(f"    Name: {metadata['general_name']}")
+            if metadata.get("general_finetune"):
+                general_info.append(f"    Finetune: {metadata['general_finetune']}")
+            if metadata.get("general_description"):
+                desc = metadata['general_description']
+                if len(desc) > 100:
+                    desc = desc[:100] + "..."
+                general_info.append(f"    Description: {desc}")
+
+            if general_info:
+                print(f"\n  Model Info:")
+                for info in general_info:
+                    print(info)
 
     # Detect family and show settings
     family = detect_model_family(model_name)

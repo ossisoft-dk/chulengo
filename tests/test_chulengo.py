@@ -560,17 +560,29 @@ class TestCmdShow:
             "gguf_path": "/cache/test/model/model-Q4_K_M.gguf"
         }
 
+        gguf_metadata = {
+            "architecture": "qwen3",
+            "parameter_count": 8_000_000_000,
+            "parameter_count_formatted": "8.0B",
+            "vocab_size": 151936,
+            "context_length": 16384,
+            "embedding_length": 4096,
+            "block_count": 32,
+            "is_multimodal": False,
+        }
+
         with patch("chulengo.load_settings", return_value={"defaults": {}, "model_overrides": {}}):
             with patch("chulengo.detect_model_family", return_value=None):
                 with patch("chulengo.get_model_cache_info", return_value=cache_info):
-                    with patch("chulengo.get_gguf_architecture", return_value="qwen3"):
+                    with patch("chulengo.extract_gguf_metadata", return_value=gguf_metadata):
                         result = chulengo.cmd_show(mock_args)
 
         assert result == 0
         captured = capsys.readouterr()
         assert "Cache Location" in captured.out
-        assert "GGUF Architecture" in captured.out
+        assert "GGUF Metadata" in captured.out
         assert "qwen3" in captured.out
+        assert "8.0B" in captured.out
 
     def test_shows_warning_for_nonexistent_model(self, mocker, capsys):
         """Test showing warning when model not in cache."""
@@ -684,6 +696,139 @@ class TestGetGgufArchitecture:
             result = chulengo.get_gguf_architecture("/path/to/model.gguf")
 
         assert result is None
+
+
+class TestExtractGgufMetadata:
+    """Tests for extract_gguf_metadata() function."""
+
+    def test_extracts_basic_metadata(self, mocker):
+        """Test extraction of basic model metadata."""
+        # Create mock tensors
+        mock_tensor = MagicMock()
+        mock_tensor.n_elements = 1_000_000_000
+
+        # Create mock field
+        mock_field = MagicMock()
+        mock_field.contents.return_value = "qwen3"
+
+        mock_reader = MagicMock()
+        mock_reader.tensors = [mock_tensor]
+        mock_reader.get_field = MagicMock(return_value=mock_field)
+
+        with patch("chulengo.GGUFReader", return_value=mock_reader):
+            result = chulengo.extract_gguf_metadata("/path/to/model.gguf")
+
+        assert result is not None
+        assert result["architecture"] == "qwen3"
+        assert result["parameter_count"] == 1_000_000_000
+        assert "parameter_count_formatted" in result
+
+    def test_extracts_architecture_specific_fields(self, mocker):
+        """Test extraction of architecture-specific fields."""
+        mock_tensor = MagicMock()
+        mock_tensor.n_elements = 2_000_000_000
+
+        mock_reader = MagicMock()
+        mock_reader.tensors = [mock_tensor]
+
+        # Mock field returns for architecture-specific fields
+        vocab_field = MagicMock()
+        vocab_field.contents.return_value = 151936
+
+        context_field = MagicMock()
+        context_field.contents.return_value = 16384
+
+        def get_field_side_effect(field_name):
+            if field_name == "general.architecture":
+                field = MagicMock()
+                field.contents.return_value = "llama"
+                return field
+            elif field_name == "llama.vocab_size":
+                return vocab_field
+            elif field_name == "llama.context_length":
+                return context_field
+            return None
+
+        mock_reader.get_field = MagicMock(side_effect=get_field_side_effect)
+
+        with patch("chulengo.GGUFReader", return_value=mock_reader):
+            result = chulengo.extract_gguf_metadata("/path/to/model.gguf")
+
+        assert result is not None
+        assert result["vocab_size"] == 151936
+        assert result["context_length"] == 16384
+
+    def test_extracts_tokenizer_info(self, mocker):
+        """Test extraction of tokenizer information."""
+        mock_tensor = MagicMock()
+        mock_tensor.n_elements = 500_000_000
+
+        mock_reader = MagicMock()
+        mock_reader.tensors = [mock_tensor]
+
+        def get_field_side_effect(field_name):
+            if field_name == "general.architecture":
+                field = MagicMock()
+                field.contents.return_value = "qwen"
+                return field
+            elif field_name == "tokenizer.ggml.model":
+                field = MagicMock()
+                field.contents.return_value = "Gemma"
+                return field
+            elif field_name == "tokenizer.ggml.pre":
+                field = MagicMock()
+                field.contents.return_value = "f"
+                return field
+            return None
+
+        mock_reader.get_field = MagicMock(side_effect=get_field_side_effect)
+
+        with patch("chulengo.GGUFReader", return_value=mock_reader):
+            result = chulengo.extract_gguf_metadata("/path/to/model.gguf")
+
+        assert result is not None
+        assert result["tokenizer_model"] == "Gemma"
+        assert result["tokenizer_pre"] == "f"
+
+    def test_returns_none_on_read_error(self, mocker):
+        """Test that None is returned on GGUF read errors."""
+        with patch("chulengo.GGUFReader", side_effect=Exception("Read error")):
+            result = chulengo.extract_gguf_metadata("/path/to/model.gguf")
+
+        assert result is None
+
+
+class TestIsMmprojFile:
+    """Tests for is_mmproj_file() function."""
+
+    def test_returns_true_for_mmproj_filename(self, mocker):
+        """Test that mmproj files in filename are detected."""
+        result = chulengo.is_mmproj_file(Path("/path/to/mmproj-gpt4-llava.gguf"))
+        assert result is True
+
+    def test_detects_clip_architecture(self, mocker):
+        """Test that CLIP architecture is detected as mmproj."""
+        mock_field = MagicMock()
+        mock_field.contents.return_value = "clip"
+
+        mock_reader = MagicMock()
+        mock_reader.get_field.return_value = mock_field
+
+        with patch("chulengo.GGUFReader", return_value=mock_reader):
+            result = chulengo.is_mmproj_file(Path("/path/to/model.gguf"))
+
+        assert result is True
+
+    def test_returns_false_for_non_mmproj(self, mocker):
+        """Test that non-mmproj files return False."""
+        result = chulengo.is_mmproj_file(Path("/path/to/regular-model.gguf"))
+        assert result is False
+
+    def test_returns_false_on_error(self, mocker):
+        """Test that errors are handled gracefully."""
+        with patch("chulengo.GGUFReader", side_effect=Exception("Read error")):
+            result = chulengo.is_mmproj_file(Path("/path/to/model.gguf"))
+        assert result is False
 
 
 class TestIntegration:
