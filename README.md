@@ -41,43 +41,25 @@ chulengo serve Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M
 
 ## Installation
 
-Make sure you have llama.cpp installed and available in your PATH. Then:
+First, install `uv` if you haven't already: <https://docs.astral.sh/uv/>
 
-### Option 1: Install with pip (recommended)
-
-This creates a proper entry point in your virtualenv:
+Then, from the chulengo project directory, run:
 
 ```bash
-# Install in development mode:
-pip install -e .
+uv tool install -e .
 ```
 
-This will use the `gguf` package for GGUF metadata extraction.
-
-### Option 2: Manual installation (for symlink setup)
-
-If you prefer to create a symlink for quick local use:
-
-```bash
-# Install the required dependencies:
-pip install pyyaml gguf
-
-# Create a symlink in ~/.local/bin:
-ln -sf $(pwd)/chulengo.py ~/.local/bin/chulengo
-```
-
-**Important:** The `gguf` package is now required for GGUF metadata extraction. Make sure it's installed in the Python environment that will run the script.
+This installs chulengo and all its dependencies (`pyyaml`, `gguf`) in an isolated environment, making the `chulengo` command immediately available in your terminal.
 
 ## Uninstall
 
 ```bash
-# If installed with pip:
-pip uninstall chulengo
+uv tool uninstall chulengo
+```
 
-# If using symlink:
-rm ~/.local/bin/chulengo
+To also remove your settings:
 
-# Remove your settings (optional - keeps model configurations):
+```bash
 rm -rf ~/.config/chulengo
 ```
 
