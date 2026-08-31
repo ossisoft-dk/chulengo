@@ -832,7 +832,7 @@ def main() -> int:
     # serve command
     serve_parser = subparsers.add_parser("serve", help="Serve a model with llama.cpp")
     serve_parser.add_argument("model", help="Model name to serve")
-    serve_parser.add_argument("--port", "-p", type=int, help="Port to serve on")
+    serve_parser.add_argument("--port", "-p", type=int, default=11853, help="Port to serve on")
     serve_parser.add_argument("--alias", "-a", help="Alias for the model")
     # Override flags
     serve_parser.add_argument("--ctx-size", type=int, help="Override context size")

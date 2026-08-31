@@ -12,17 +12,13 @@ Instead of:
 
 ```bash
 llama serve \
-  --port 8001 \
-  --alias qwopus \
+  --port 11853 \
   --hf-repo Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M \
   --ctx-size 204800 \
-  --spec-type draft-mtp \
-  --reasoning off \
   --flash-attn on \
+  --reasoning off \
   --cache-type-k q8_0 \
-  --cache-type-v q8_0 \
-  --jinja \
-  --chat-template-file $HOME/.config/llama.cpp/templates/froggeric/Qwen-Fixed-Chat-Templates/chat_template.jinja
+  --cache-type-v q8_0
 ```
 
 You can simply run:
@@ -87,14 +83,11 @@ Create settings for a model:
 
 ```bash
 chulengo create Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M \
-  --alias qwopus \
   --ctx-size 204800 \
-  --spec-type draft-mtp \
-  --reasoning off \
   --flash-attn on \
+  --reasoning off \
   --cache-type-k q8_0 \
-  --cache-type-v q8_0 \
-  --jinja
+  --cache-type-v q8_0
 ```
 
 **Note:** If settings already exist, they will be overwritten.
@@ -134,6 +127,8 @@ With custom port:
 chulengo serve Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M --port 8001
 ```
 
+By default, Chulengo serves on port **11853**. You can specify a different port with the `--port` or `-p` flag.
+
 Override settings from command line:
 
 ```bash
@@ -164,7 +159,7 @@ Chulengo includes sensible defaults for these model types:
 | qwen       | ctx-size=8192, flash-attn=on, jinja                                                         |
 | qwen35     | ctx-size=16384, flash-attn=on, cache-type-k=q8_0, cache-type-v=q8_0, jinja                  |
 | qwen35moe  | ctx-size=32768, flash-attn=on, cache-type-k=q8_0, cache-type-v=q8_0, spec-type=draft, jinja |
-| qwopus     | ctx-size=204800, spec-type=draft-mtp, flash-attn=on, cache-type-k=q8_0                      |
+| qwopus     | ctx-size=204800, flash-attn=on, reasoning=off, cache-type-k=q8_0, cache-type-v=q8_0         |
 | laguna     | ctx-size=262144, flash-attn=on, jinja                                                       |
 | llama3     | ctx-size=8192, flash-attn=on, jinja                                                         |
 | llama      | ctx-size=4096, flash-attn=on                                                                |
