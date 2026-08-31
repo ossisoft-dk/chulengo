@@ -25,24 +25,46 @@ DEFAULT_SETTINGS_FILE = Path(os.path.realpath(__file__)).parent / "models.yaml"
 
 
 def load_settings() -> dict:
-    """Load settings from the user's config file or fall back to defaults."""
-    # Load defaults from the package's models.yaml
-    settings = {}
-    if DEFAULT_SETTINGS_FILE.exists():
-        with open(DEFAULT_SETTINGS_FILE) as f:
-            settings = yaml.safe_load(f) or {}
-    else:
-        settings = {"defaults": {}, "model_overrides": {}}
+    """Load settings from user config, falling back to package defaults.
 
-    # Load user overrides if they exist and merge model_overrides
+    If no settings file exists, copies models.yaml from source to user config.
+    """
+    # If user config exists, use it
     if SETTINGS_FILE.exists():
         with open(SETTINGS_FILE) as f:
-            user_settings = yaml.safe_load(f) or {}
-        # Merge model_overrides - user settings take precedence
-        merged_overrides = settings.get("model_overrides", {})
-        if user_settings.get("model_overrides"):
-            merged_overrides = {**merged_overrides, **user_settings["model_overrides"]}
-        settings["model_overrides"] = merged_overrides
+            settings = yaml.safe_load(f) or {}
+        return settings
+
+    # Try to find and load defaults from multiple sources
+    settings: dict[str, Any] = {"defaults": {}, "model_overrides": {}}
+
+    sources = [
+        DEFAULT_SETTINGS_FILE,  # Package installation directory
+        Path(__file__).parent / "models.yaml",  # Source directory (editable install)
+    ]
+
+    for source in sources:
+        if source.exists():
+            try:
+                with open(source) as f:
+                    settings = yaml.safe_load(f) or {"defaults": {}, "model_overrides": {}}
+                break
+            except Exception:
+                continue
+
+    # If no defaults found, create minimal defaults
+    if not settings.get("defaults"):
+        settings = {
+            "defaults": {
+                "generic": {"ctx_size": 4096, "flash_attn": "off", "reasoning": "off"}
+            },
+            "model_overrides": {}
+        }
+
+    # Save to user config if we're using defaults (first run)
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(SETTINGS_FILE, "w") as f:
+        yaml.dump(settings, f, default_flow_style=False)
 
     return settings
 

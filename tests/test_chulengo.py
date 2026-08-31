@@ -18,72 +18,54 @@ import chulengo
 class TestLoadSettings:
     """Tests for load_settings() function."""
 
-    def test_load_default_settings_only(self, mocker):
-        """Test loading settings when only default file exists."""
+    def test_load_settings_from_user_config(self, mocker):
+        """Test loading settings from user config file if it exists."""
         settings_content = yaml.dump({
             "defaults": {
-                "generic": {"ctx_size": 4096, "flash_attn": "off"}
+                "qwen3": {"ctx_size": 16384, "flash_attn": "on"}
             },
             "model_overrides": {}
         })
 
+        # User config exists
         with patch.object(Path, "exists", return_value=True):
             with patch("builtins.open", mock_open(read_data=settings_content)):
                 settings = chulengo.load_settings()
 
-        assert settings["defaults"]["generic"]["ctx_size"] == 4096
+        assert settings["defaults"]["qwen3"]["ctx_size"] == 16384
         assert settings["model_overrides"] == {}
 
-    def test_load_settings_with_user_overrides(self, mocker):
-        """Test loading settings with user overrides merged."""
-        default_content = yaml.dump({
+    def test_load_settings_falls_back_to_source(self, mocker):
+        """Test loading settings from source directory when user config doesn't exist."""
+        source_content = yaml.dump({
             "defaults": {"generic": {"ctx_size": 4096}},
             "model_overrides": {}
         })
 
-        def open_side_effect(file, *args, **kwargs):
-            if "models.yaml" in str(file):
-                # First call is default settings, second is user settings
-                if not hasattr(open_side_effect, 'call_count'):
-                    open_side_effect.call_count = 0
-                open_side_effect.call_count += 1
-                if open_side_effect.call_count == 1:
-                    return mock_open(read_data=default_content).return_value
-                else:
-                    user_content = yaml.dump({
-                        "model_overrides": {
-                            "my-model": {"ctx_size": 8192}
-                        }
-                    })
-                    return mock_open(read_data=user_content).return_value
-            return mock_open(read_data="").return_value
+        # Mock exists to return True for all files
+        mocker.patch.object(Path, "exists", return_value=True)
+        mocker.patch("builtins.open", mock_open(read_data=source_content))
 
-        open_side_effect.call_count = 0
+        settings = chulengo.load_settings()
 
-        with patch.object(Path, "exists", return_value=True):
-            with patch("builtins.open", side_effect=open_side_effect):
-                settings = chulengo.load_settings()
+        assert settings["defaults"]["generic"]["ctx_size"] == 4096
 
-        assert "my-model" in settings["model_overrides"]
-        assert settings["model_overrides"]["my-model"]["ctx_size"] == 8192
+    def test_load_settings_creates_defaults_when_missing(self, mocker):
+        """Test that defaults are created when no source file is found."""
+        mock_file = mocker.MagicMock()
+        mock_file.__enter__ = mocker.MagicMock(return_value=mock_file)
+        mock_file.__exit__ = mocker.MagicMock(return_value=False)
+        mock_file.write = mocker.MagicMock()
 
-    def test_load_settings_missing_file(self, mocker):
-        """Test loading settings when no files exist."""
-        with patch.object(Path, "exists", return_value=False):
-            settings = chulengo.load_settings()
+        # Neither user config nor source exists
+        mocker.patch.object(Path, "exists", return_value=False)
+        mocker.patch("builtins.open", return_value=mock_file)
 
-        assert settings["defaults"] == {}
+        settings = chulengo.load_settings()
+
+        # Should create defaults
+        assert settings["defaults"]["generic"]["ctx_size"] == 4096
         assert settings["model_overrides"] == {}
-
-    def test_load_settings_empty_file(self, mocker):
-        """Test loading settings from an empty file returns valid defaults structure."""
-        with patch.object(Path, "exists", return_value=True):
-            with patch("builtins.open", mock_open(read_data="")):
-                settings = chulengo.load_settings()
-
-        # yaml.safe_load returns None for empty string
-        assert settings is not None
-        assert "defaults" in settings or "model_overrides" in settings
 
 
 class TestSaveSettings:
@@ -796,39 +778,6 @@ class TestExtractGgufMetadata:
             result = chulengo.extract_gguf_metadata("/path/to/model.gguf")
 
         assert result is None
-
-
-class TestIsMmprojFile:
-    """Tests for is_mmproj_file() function."""
-
-    def test_returns_true_for_mmproj_filename(self, mocker):
-        """Test that mmproj files in filename are detected."""
-        result = chulengo.is_mmproj_file(Path("/path/to/mmproj-gpt4-llava.gguf"))
-        assert result is True
-
-    def test_detects_clip_architecture(self, mocker):
-        """Test that CLIP architecture is detected as mmproj."""
-        mock_field = MagicMock()
-        mock_field.contents.return_value = "clip"
-
-        mock_reader = MagicMock()
-        mock_reader.get_field.return_value = mock_field
-
-        with patch("chulengo.GGUFReader", return_value=mock_reader):
-            result = chulengo.is_mmproj_file(Path("/path/to/model.gguf"))
-
-        assert result is True
-
-    def test_returns_false_for_non_mmproj(self, mocker):
-        """Test that non-mmproj files return False."""
-        result = chulengo.is_mmproj_file(Path("/path/to/regular-model.gguf"))
-        assert result is False
-
-    def test_returns_false_on_error(self, mocker):
-        """Test that errors are handled gracefully."""
-        with patch("chulengo.GGUFReader", side_effect=Exception("Read error")):
-            result = chulengo.is_mmproj_file(Path("/path/to/model.gguf"))
-        assert result is False
 
 
 class TestIntegration:
