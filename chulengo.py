@@ -18,7 +18,6 @@ import yaml
 from gguf import GGUFReader
 from gguf.utility import model_weight_count_rounded_notation
 
-
 # Default settings file path
 SETTINGS_FILE = Path.home() / ".config" / "chulengo" / "models.yaml"
 DEFAULT_SETTINGS_FILE = Path(os.path.realpath(__file__)).parent / "models.yaml"
@@ -47,7 +46,10 @@ def load_settings() -> dict:
         if source.exists():
             try:
                 with open(source) as f:
-                    settings = yaml.safe_load(f) or {"defaults": {}, "model_overrides": {}}
+                    settings = yaml.safe_load(f) or {
+                        "defaults": {},
+                        "model_overrides": {},
+                    }
                 break
             except Exception:
                 continue
@@ -58,7 +60,7 @@ def load_settings() -> dict:
             "defaults": {
                 "generic": {"ctx_size": 4096, "flash_attn": "off", "reasoning": "off"}
             },
-            "model_overrides": {}
+            "model_overrides": {},
         }
 
     # Save to user config if we're using defaults (first run)
@@ -86,7 +88,11 @@ def get_hf_cache_path() -> str | None:
         return os.environ["HUGGINGFACE_HUB_CACHE"]
     if os.environ.get("HF_HOME"):
         return os.path.join(os.environ["HF_HOME"], "hub")
-    return os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "huggingface", "hub")
+    return os.path.join(
+        os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+        "huggingface",
+        "hub",
+    )
 
 
 def get_gguf_architecture(gguf_path: Path) -> str | None:
@@ -140,7 +146,9 @@ def extract_gguf_metadata(gguf_path: Path) -> dict | None:
     result: dict[str, Any] = {
         "architecture": architecture,
         "parameter_count": param_count,
-        "parameter_count_formatted": model_weight_count_rounded_notation(param_count, min_digits=3),
+        "parameter_count_formatted": model_weight_count_rounded_notation(
+            param_count, min_digits=3
+        ),
     }
 
     # Extract LLM fields (architecture-specific)
@@ -173,7 +181,14 @@ def extract_gguf_metadata(gguf_path: Path) -> dict | None:
     )
 
     # Extract general metadata
-    for field_name in ["name", "basename", "finetune", "description", "author", "version"]:
+    for field_name in [
+        "name",
+        "basename",
+        "finetune",
+        "description",
+        "author",
+        "version",
+    ]:
         field = reader.get_field(f"general.{field_name}")
         if field:
             result[f"general_{field_name}"] = field.contents()
@@ -231,6 +246,7 @@ def detect_model_family(model_name: str) -> str | None:
             if base in model_norm and base != family:
                 # Check if this is actually a llama3 variant
                 import re
+
                 # Check for llama followed by 3 (with potential dot)
                 if not re.search(r"llama[\._-]?3", model_lower):
                     continue
@@ -348,7 +364,9 @@ def cmd_ls(args: argparse.Namespace) -> int:
         latest_snapshot = max(snapshot_dirs, key=lambda p: p.stat().st_mtime)
 
         # Find GGUF files (they are symlinks, glob follows them)
-        gguf_files = [f for f in latest_snapshot.glob("*.gguf") if not f.name.startswith("mmproj")]
+        gguf_files = [
+            f for f in latest_snapshot.glob("*.gguf") if not f.name.startswith("mmproj")
+        ]
         if gguf_files:
             repo_name = model_dir.name.replace("models--", "").replace("--", "/")
             size = sum(f.stat().st_size for f in gguf_files)
@@ -405,7 +423,9 @@ def cmd_show(args: argparse.Namespace) -> int:
         if metadata:
             print(f"\nGGUF Metadata:")
             print(f"  Architecture: {metadata.get('architecture', 'unknown')}")
-            print(f"  Parameters: {metadata.get('parameter_count_formatted', 'unknown')}")
+            print(
+                f"  Parameters: {metadata.get('parameter_count_formatted', 'unknown')}"
+            )
 
             # Show multimodal capabilities
             # Multimodal can be detected from GGUF metadata OR from mmproj files
@@ -432,16 +452,22 @@ def cmd_show(args: argparse.Namespace) -> int:
                     print("    Audio encoder: Yes")
                 # Show mmproj files if they exist (indicates multimodal capability)
                 if cache_info.get("mmproj_files"):
-                    print(f"    Multimodal projection files: {', '.join(cache_info['mmproj_files'])}")
+                    print(
+                        f"    Multimodal projection files: {', '.join(cache_info['mmproj_files'])}"
+                    )
 
             # Show architecture-specific details
             arch_details = []
             if "vocab_size" in metadata:
                 arch_details.append(f"    Vocab size: {metadata['vocab_size']:,}")
             if "context_length" in metadata:
-                arch_details.append(f"    Context length: {metadata['context_length']:,}")
+                arch_details.append(
+                    f"    Context length: {metadata['context_length']:,}"
+                )
             if "embedding_length" in metadata:
-                arch_details.append(f"    Embedding length: {metadata['embedding_length']:,}")
+                arch_details.append(
+                    f"    Embedding length: {metadata['embedding_length']:,}"
+                )
             if "block_count" in metadata:
                 arch_details.append(f"    Number of layers: {metadata['block_count']}")
 
@@ -475,7 +501,7 @@ def cmd_show(args: argparse.Namespace) -> int:
             if metadata.get("general_basename"):
                 general_info.append(f"  Base model: {metadata['general_basename']}")
             if metadata.get("general_description"):
-                desc = metadata['general_description']
+                desc = metadata["general_description"]
                 if len(desc) > 100:
                     desc = desc[:100] + "..."
                 general_info.append(f"  Description: {desc}")
@@ -576,13 +602,17 @@ def build_llama_command(
     # Handle flash_attn - can be boolean or string
     flash_attn_val = all_settings.get("flash_attn")
     if flash_attn_val is not None:
-        val_str = "on" if str(flash_attn_val).lower() in ("true", "on", "yes", "1") else "off"
+        val_str = (
+            "on" if str(flash_attn_val).lower() in ("true", "on", "yes", "1") else "off"
+        )
         cmd.extend(["--flash-attn", val_str])
 
     # Handle reasoning - can be boolean or string
     reasoning_val = all_settings.get("reasoning")
     if reasoning_val is not None:
-        val_str = "on" if str(reasoning_val).lower() in ("true", "on", "yes", "1") else "off"
+        val_str = (
+            "on" if str(reasoning_val).lower() in ("true", "on", "yes", "1") else "off"
+        )
         cmd.extend(["--reasoning", val_str])
 
     if all_settings.get("jinja"):
@@ -771,7 +801,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 proc.wait()
             return 130  # Standard exit code for SIGINT
     except FileNotFoundError:
-        print("Error: llama command not found. Please install llama.cpp.", file=sys.stderr)
+        print(
+            "Error: llama command not found. Please install llama.cpp.", file=sys.stderr
+        )
         return 1
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -801,13 +833,21 @@ def main() -> int:
     create_parser.add_argument("model", help="Model name")
     create_parser.add_argument("--alias", "-a", help="Alias for the model")
     create_parser.add_argument("--ctx-size", type=int, help="Context size")
-    create_parser.add_argument("--flash-attn", choices=["on", "off"], help="Enable/disable flash attention")
-    create_parser.add_argument("--reasoning", choices=["on", "off"], help="Enable/disable reasoning")
-    create_parser.add_argument("--jinja", action="store_true", help="Use Jinja template")
+    create_parser.add_argument(
+        "--flash-attn", choices=["on", "off"], help="Enable/disable flash attention"
+    )
+    create_parser.add_argument(
+        "--reasoning", choices=["on", "off"], help="Enable/disable reasoning"
+    )
+    create_parser.add_argument(
+        "--jinja", action="store_true", help="Use Jinja template"
+    )
     create_parser.add_argument("--spec-type", help="Speculative decoding type")
     create_parser.add_argument("--cache-type-k", help="Cache type for keys")
     create_parser.add_argument("--cache-type-v", help="Cache type for values")
-    create_parser.add_argument("--chat-template-file", help="Path to chat template file")
+    create_parser.add_argument(
+        "--chat-template-file", help="Path to chat template file"
+    )
     create_parser.set_defaults(func=cmd_create)
 
     # update command
@@ -815,13 +855,21 @@ def main() -> int:
     update_parser.add_argument("model", help="Model name")
     update_parser.add_argument("--alias", "-a", help="Alias for the model")
     update_parser.add_argument("--ctx-size", type=int, help="Context size")
-    update_parser.add_argument("--flash-attn", choices=["on", "off"], help="Enable/disable flash attention")
-    update_parser.add_argument("--reasoning", choices=["on", "off"], help="Enable/disable reasoning")
-    update_parser.add_argument("--jinja", action="store_true", help="Use Jinja template")
+    update_parser.add_argument(
+        "--flash-attn", choices=["on", "off"], help="Enable/disable flash attention"
+    )
+    update_parser.add_argument(
+        "--reasoning", choices=["on", "off"], help="Enable/disable reasoning"
+    )
+    update_parser.add_argument(
+        "--jinja", action="store_true", help="Use Jinja template"
+    )
     update_parser.add_argument("--spec-type", help="Speculative decoding type")
     update_parser.add_argument("--cache-type-k", help="Cache type for keys")
     update_parser.add_argument("--cache-type-v", help="Cache type for values")
-    update_parser.add_argument("--chat-template-file", help="Path to chat template file")
+    update_parser.add_argument(
+        "--chat-template-file", help="Path to chat template file"
+    )
     update_parser.set_defaults(func=cmd_update)
 
     # delete command
@@ -832,13 +880,21 @@ def main() -> int:
     # serve command
     serve_parser = subparsers.add_parser("serve", help="Serve a model with llama.cpp")
     serve_parser.add_argument("model", help="Model name to serve")
-    serve_parser.add_argument("--port", "-p", type=int, default=11853, help="Port to serve on")
+    serve_parser.add_argument(
+        "--port", "-p", type=int, default=11853, help="Port to serve on"
+    )
     serve_parser.add_argument("--alias", "-a", help="Alias for the model")
     # Override flags
     serve_parser.add_argument("--ctx-size", type=int, help="Override context size")
-    serve_parser.add_argument("--flash-attn", choices=["on", "off"], help="Override flash attention")
-    serve_parser.add_argument("--reasoning", choices=["on", "off"], help="Override reasoning")
-    serve_parser.add_argument("--jinja", action="store_true", help="Enable Jinja template")
+    serve_parser.add_argument(
+        "--flash-attn", choices=["on", "off"], help="Override flash attention"
+    )
+    serve_parser.add_argument(
+        "--reasoning", choices=["on", "off"], help="Override reasoning"
+    )
+    serve_parser.add_argument(
+        "--jinja", action="store_true", help="Enable Jinja template"
+    )
     serve_parser.add_argument("--spec-type", help="Override speculative decoding type")
     serve_parser.add_argument("--cache-type-k", help="Override cache type for keys")
     serve_parser.add_argument("--cache-type-v", help="Override cache type for values")

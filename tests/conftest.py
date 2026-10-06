@@ -27,7 +27,9 @@ def mock_filesystem(mocker, tmp_path):
     """Mock filesystem operations for testing."""
     # Create a fake models.yaml file
     settings_file = tmp_path / "models.yaml"
-    settings_file.write_text("defaults:\n  generic:\n    ctx_size: 4096\nmodel_overrides: {}")
+    settings_file.write_text(
+        "defaults:\n  generic:\n    ctx_size: 4096\nmodel_overrides: {}"
+    )
 
     # Mock Path.exists to check for specific test scenarios
     def mock_exists(self):

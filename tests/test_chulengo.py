@@ -20,12 +20,12 @@ class TestLoadSettings:
 
     def test_load_settings_from_user_config(self, mocker):
         """Test loading settings from user config file if it exists."""
-        settings_content = yaml.dump({
-            "defaults": {
-                "qwen3": {"ctx_size": 16384, "flash_attn": "on"}
-            },
-            "model_overrides": {}
-        })
+        settings_content = yaml.dump(
+            {
+                "defaults": {"qwen3": {"ctx_size": 16384, "flash_attn": "on"}},
+                "model_overrides": {},
+            }
+        )
 
         # User config exists
         with patch.object(Path, "exists", return_value=True):
@@ -37,10 +37,9 @@ class TestLoadSettings:
 
     def test_load_settings_falls_back_to_source(self, mocker):
         """Test loading settings from source directory when user config doesn't exist."""
-        source_content = yaml.dump({
-            "defaults": {"generic": {"ctx_size": 4096}},
-            "model_overrides": {}
-        })
+        source_content = yaml.dump(
+            {"defaults": {"generic": {"ctx_size": 4096}}, "model_overrides": {}}
+        )
 
         # Mock exists to return True for all files
         mocker.patch.object(Path, "exists", return_value=True)
@@ -89,7 +88,7 @@ class TestSaveSettings:
         """Test that save_settings writes YAML with correct structure."""
         settings = {
             "defaults": {"generic": {"ctx_size": 4096}},
-            "model_overrides": {"test-model": {"flash_attn": "on"}}
+            "model_overrides": {"test-model": {"flash_attn": "on"}},
         }
 
         mock_file = mocker.MagicMock()
@@ -113,7 +112,12 @@ class TestGetHfCachePath:
         """Test that LLAMA_CACHE env var takes precedence."""
         mocker.patch.dict(os.environ, {"LLAMA_CACHE": "/custom/cache"})
         # Clear other env vars
-        for key in ["HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME", "XDG_CACHE_HOME"]:
+        for key in [
+            "HF_HUB_CACHE",
+            "HUGGINGFACE_HUB_CACHE",
+            "HF_HOME",
+            "XDG_CACHE_HOME",
+        ]:
             os.environ.pop(key, None)
 
         assert chulengo.get_hf_cache_path() == "/custom/cache"
@@ -161,11 +165,18 @@ class TestGetHfCachePath:
         """Test default path when no environment variables are set."""
         # Clear all relevant env vars by mocking os.environ
         import importlib
+
         importlib.reload(chulengo)
 
         # Temporarily remove all relevant env vars
         old_environ = os.environ.copy()
-        for key in ["LLAMA_CACHE", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME", "XDG_CACHE_HOME"]:
+        for key in [
+            "LLAMA_CACHE",
+            "HF_HUB_CACHE",
+            "HUGGINGFACE_HUB_CACHE",
+            "HF_HOME",
+            "XDG_CACHE_HOME",
+        ]:
             os.environ.pop(key, None)
 
         try:
@@ -209,8 +220,14 @@ class TestDetectModelFamily:
 
     def test_detects_mistral_models(self):
         """Test detection of Mistral models."""
-        assert chulengo.detect_model_family("mistralai/Mistral-7B-Instruct-v0.3") == "mistral"
-        assert chulengo.detect_model_family("mistralai/Mixtral-8x7B-Instruct-v7.1") == "mixtral"
+        assert (
+            chulengo.detect_model_family("mistralai/Mistral-7B-Instruct-v0.3")
+            == "mistral"
+        )
+        assert (
+            chulengo.detect_model_family("mistralai/Mixtral-8x7B-Instruct-v7.1")
+            == "mixtral"
+        )
 
     def test_detects_gemma_models(self):
         """Test detection of Gemma models."""
@@ -219,7 +236,10 @@ class TestDetectModelFamily:
 
     def test_detects_codestral(self):
         """Test detection of Codestral models."""
-        assert chulengo.detect_model_family("codestral/codestral-embeddings") == "codestral"
+        assert (
+            chulengo.detect_model_family("codestral/codestral-embeddings")
+            == "codestral"
+        )
 
     def test_detects_granite(self):
         """Test detection of Granite models."""
@@ -256,16 +276,16 @@ class TestGetDefaultSettings:
         settings = {
             "defaults": {
                 "qwen3": {"ctx_size": 16384, "flash_attn": "on"},
-                "generic": {"ctx_size": 4096, "flash_attn": "off"}
+                "generic": {"ctx_size": 4096, "flash_attn": "off"},
             },
-            "model_overrides": {}
+            "model_overrides": {},
         }
 
         cache_info = {
             "cache_dir": "/cache/test/model",
             "snapshot": "/cache/test/model/snapshots/abc",
             "gguf_files": ["model.gguf"],
-            "gguf_path": "/cache/test/model/model.gguf"
+            "gguf_path": "/cache/test/model/model.gguf",
         }
 
         with patch("chulengo.load_settings", return_value=settings):
@@ -281,9 +301,9 @@ class TestGetDefaultSettings:
         settings = {
             "defaults": {
                 "qwen": {"ctx_size": 8192, "flash_attn": "on"},
-                "generic": {"ctx_size": 4096}
+                "generic": {"ctx_size": 4096},
             },
-            "model_overrides": {}
+            "model_overrides": {},
         }
 
         with patch("chulengo.load_settings", return_value=settings):
@@ -297,10 +317,8 @@ class TestGetDefaultSettings:
     def test_uses_generic_when_no_match_found(self, mocker):
         """Test that generic defaults are used when no match found."""
         settings = {
-            "defaults": {
-                "generic": {"ctx_size": 4096, "flash_attn": "off"}
-            },
-            "model_overrides": {}
+            "defaults": {"generic": {"ctx_size": 4096, "flash_attn": "off"}},
+            "model_overrides": {},
         }
 
         with patch("chulengo.load_settings", return_value=settings):
@@ -352,17 +370,14 @@ class TestBuildLlamaCommand:
 
     def test_converts_boolean_to_on_off(self, mocker):
         """Test that boolean values are converted to on/off strings."""
-        settings = {
-            "defaults": {},
-            "model_overrides": {}
-        }
+        settings = {"defaults": {}, "model_overrides": {}}
 
         with patch("chulengo.load_settings", return_value=settings):
             with patch("chulengo.detect_model_family", return_value=None):
-                with patch("chulengo.get_default_settings", return_value={
-                    "flash_attn": True,
-                    "reasoning": False
-                }):
+                with patch(
+                    "chulengo.get_default_settings",
+                    return_value={"flash_attn": True, "reasoning": False},
+                ):
                     result = chulengo.build_llama_command("test/model")
 
         assert "--flash-attn" in result
@@ -379,7 +394,9 @@ class TestBuildLlamaCommand:
 
         with patch("chulengo.load_settings", return_value=settings):
             with patch("chulengo.detect_model_family", return_value=None):
-                with patch("chulengo.get_default_settings", return_value={"jinja": True}):
+                with patch(
+                    "chulengo.get_default_settings", return_value={"jinja": True}
+                ):
                     result = chulengo.build_llama_command("test/model")
 
         assert "--jinja" in result
@@ -388,7 +405,7 @@ class TestBuildLlamaCommand:
         """Test that user overrides merge with defaults."""
         settings = {
             "defaults": {"generic": {"ctx_size": 4096}},
-            "model_overrides": {"test-model": {"ctx_size": 8192}}
+            "model_overrides": {"test-model": {"ctx_size": 8192}},
         }
 
         with patch("chulengo.load_settings", return_value=settings):
@@ -402,16 +419,14 @@ class TestBuildLlamaCommand:
 
     def test_command_line_override_takes_precedence(self, mocker):
         """Test that command-line overrides take precedence over file settings."""
-        settings = {
-            "defaults": {"generic": {"ctx_size": 4096}},
-            "model_overrides": {}
-        }
+        settings = {"defaults": {"generic": {"ctx_size": 4096}}, "model_overrides": {}}
 
         with patch("chulengo.load_settings", return_value=settings):
-            with patch("chulengo.get_default_settings", return_value={"ctx_size": 4096}):
+            with patch(
+                "chulengo.get_default_settings", return_value={"ctx_size": 4096}
+            ):
                 result = chulengo.build_llama_command(
-                    "test/model",
-                    ctx_size=16384  # Override
+                    "test/model", ctx_size=16384  # Override
                 )
 
         assert "--ctx-size" in result
@@ -460,7 +475,9 @@ class TestCmdCreate:
         mock_load = mocker.patch("chulengo.load_settings")
         mock_load.return_value = {
             "defaults": {},
-            "model_overrides": {"existing/model": {"ctx_size": 8192, "flash_attn": "on"}}
+            "model_overrides": {
+                "existing/model": {"ctx_size": 8192, "flash_attn": "on"}
+            },
         }
         mock_save = mocker.patch("chulengo.save_settings")
 
@@ -478,9 +495,7 @@ class TestCmdDelete:
         mock_args.target = "test/model"
 
         mock_load = mocker.patch("chulengo.load_settings")
-        mock_load.return_value = {
-            "model_overrides": {"test/model": {"ctx_size": 8192}}
-        }
+        mock_load.return_value = {"model_overrides": {"test/model": {"ctx_size": 8192}}}
         mock_save = mocker.patch("chulengo.save_settings")
 
         result = chulengo.cmd_delete(mock_args)
@@ -514,13 +529,13 @@ class TestCmdShow:
             "cache_dir": "/cache/Qwen/Qwen3-8B",
             "snapshot": "/cache/Qwen/Qwen3-8B/snapshots/123",
             "gguf_files": ["model-Q4_K_M.gguf"],
-            "gguf_path": "/cache/Qwen/Qwen3-8B/model-Q4_K_M.gguf"
+            "gguf_path": "/cache/Qwen/Qwen3-8B/model-Q4_K_M.gguf",
         }
 
         with patch("chulengo.load_settings") as mock_load:
             mock_load.return_value = {
                 "defaults": {"qwen3": {"ctx_size": 16384, "flash_attn": "on"}},
-                "model_overrides": {}
+                "model_overrides": {},
             }
             with patch("chulengo.detect_model_family", return_value="qwen3"):
                 with patch("chulengo.get_model_cache_info", return_value=cache_info):
@@ -539,7 +554,7 @@ class TestCmdShow:
             "cache_dir": "/cache/test/model",
             "snapshot": "/cache/test/model/snapshots/123",
             "gguf_files": ["model-Q4_K_M.gguf"],
-            "gguf_path": "/cache/test/model/model-Q4_K_M.gguf"
+            "gguf_path": "/cache/test/model/model-Q4_K_M.gguf",
         }
 
         gguf_metadata = {
@@ -553,10 +568,15 @@ class TestCmdShow:
             "is_multimodal": False,
         }
 
-        with patch("chulengo.load_settings", return_value={"defaults": {}, "model_overrides": {}}):
+        with patch(
+            "chulengo.load_settings",
+            return_value={"defaults": {}, "model_overrides": {}},
+        ):
             with patch("chulengo.detect_model_family", return_value=None):
                 with patch("chulengo.get_model_cache_info", return_value=cache_info):
-                    with patch("chulengo.extract_gguf_metadata", return_value=gguf_metadata):
+                    with patch(
+                        "chulengo.extract_gguf_metadata", return_value=gguf_metadata
+                    ):
                         result = chulengo.cmd_show(mock_args)
 
         assert result == 0
@@ -571,7 +591,10 @@ class TestCmdShow:
         mock_args = MagicMock()
         mock_args.model = "nonexistent/model"
 
-        with patch("chulengo.load_settings", return_value={"defaults": {}, "model_overrides": {}}):
+        with patch(
+            "chulengo.load_settings",
+            return_value={"defaults": {}, "model_overrides": {}},
+        ):
             with patch("chulengo.get_model_cache_info", return_value=None):
                 result = chulengo.cmd_show(mock_args)
 
@@ -831,7 +854,9 @@ class TestCmdUpdate:
         mock_load = mocker.patch("chulengo.load_settings")
         mock_load.return_value = {
             "defaults": {},
-            "model_overrides": {"existing/model": {"ctx_size": 8192, "flash_attn": "on"}}
+            "model_overrides": {
+                "existing/model": {"ctx_size": 8192, "flash_attn": "on"}
+            },
         }
         mock_save = mocker.patch("chulengo.save_settings")
 
@@ -854,10 +879,7 @@ class TestCmdUpdate:
         mock_args.chat_template_file = None
 
         mock_load = mocker.patch("chulengo.load_settings")
-        mock_load.return_value = {
-            "defaults": {},
-            "model_overrides": {}
-        }
+        mock_load.return_value = {"defaults": {}, "model_overrides": {}}
         mock_save = mocker.patch("chulengo.save_settings")
 
         result = chulengo.cmd_update(mock_args)
@@ -899,7 +921,9 @@ class TestBuildLlamaCommandAdditional:
 
         with patch("chulengo.load_settings", return_value=settings):
             with patch("chulengo.detect_model_family", return_value=None):
-                with patch("chulengo.get_default_settings", return_value={"spec_type": "draft"}):
+                with patch(
+                    "chulengo.get_default_settings", return_value={"spec_type": "draft"}
+                ):
                     result = chulengo.build_llama_command("test/model")
 
         assert "--spec-type" in result
@@ -912,10 +936,10 @@ class TestBuildLlamaCommandAdditional:
 
         with patch("chulengo.load_settings", return_value=settings):
             with patch("chulengo.detect_model_family", return_value=None):
-                with patch("chulengo.get_default_settings", return_value={
-                    "cache_type_k": "q8_0",
-                    "cache_type_v": "q8_0"
-                }):
+                with patch(
+                    "chulengo.get_default_settings",
+                    return_value={"cache_type_k": "q8_0", "cache_type_v": "q8_0"},
+                ):
                     result = chulengo.build_llama_command("test/model")
 
         assert "--cache-type-k" in result
@@ -927,9 +951,10 @@ class TestBuildLlamaCommandAdditional:
 
         with patch("chulengo.load_settings", return_value=settings):
             with patch("chulengo.detect_model_family", return_value=None):
-                with patch("chulengo.get_default_settings", return_value={
-                    "chat_template_file": "/path/to/template.jinja"
-                }):
+                with patch(
+                    "chulengo.get_default_settings",
+                    return_value={"chat_template_file": "/path/to/template.jinja"},
+                ):
                     result = chulengo.build_llama_command("test/model")
 
         assert "--chat-template-file" in result
@@ -942,10 +967,10 @@ class TestBuildLlamaCommandAdditional:
 
         with patch("chulengo.load_settings", return_value=settings):
             with patch("chulengo.detect_model_family", return_value=None):
-                with patch("chulengo.get_default_settings", return_value={
-                    "ctx_size": None,
-                    "flash_attn": None
-                }):
+                with patch(
+                    "chulengo.get_default_settings",
+                    return_value={"ctx_size": None, "flash_attn": None},
+                ):
                     result = chulengo.build_llama_command("test/model")
 
         # None values should not result in flags being added
@@ -979,12 +1004,16 @@ class TestModelFamilyCoverage:
 
         for model_name, expected_family in test_models:
             result = chulengo.detect_model_family(model_name)
-            assert result == expected_family, f"Failed for {model_name}: got {result}, expected {expected_family}"
+            assert (
+                result == expected_family
+            ), f"Failed for {model_name}: got {result}, expected {expected_family}"
 
     def test_detects_qwen_coder_models(self):
         """Test that Codestral models are detected correctly."""
         # Codestral should match codestral model family
-        assert chulengo.detect_model_family("codestral/codestral-7B-v0.1") == "codestral"
+        assert (
+            chulengo.detect_model_family("codestral/codestral-7B-v0.1") == "codestral"
+        )
 
     def test_detects_laguna_models(self):
         """Test that Laguna models are detected correctly."""
