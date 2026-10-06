@@ -1,6 +1,5 @@
 """Tests for Chulengo - A llama.cpp wrapper for HuggingFace models."""
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -479,7 +478,6 @@ class TestCmdCreate:
                 "existing/model": {"ctx_size": 8192, "flash_attn": "on"}
             },
         }
-        mock_save = mocker.patch("chulengo.save_settings")
 
         result = chulengo.cmd_create(mock_args)
 
@@ -880,7 +878,7 @@ class TestCmdUpdate:
 
         mock_load = mocker.patch("chulengo.load_settings")
         mock_load.return_value = {"defaults": {}, "model_overrides": {}}
-        mock_save = mocker.patch("chulengo.save_settings")
+        _mock_save = mocker.patch("chulengo.save_settings")
 
         result = chulengo.cmd_update(mock_args)
 

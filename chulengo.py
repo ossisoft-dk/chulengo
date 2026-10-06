@@ -7,7 +7,6 @@ by applying sensible defaults based on model family.
 """
 
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -409,11 +408,11 @@ def cmd_show(args: argparse.Namespace) -> int:
     # Build display info
     print(f"Model: {model_name}")
 
-    print(f"\nCache Location:")
+    print("\nCache Location:")
     print(f"  Repository: {cache_info['cache_dir']}")
     print(f"  Snapshot: {cache_info['snapshot']}")
 
-    print(f"\nAvailable GGUF files:")
+    print("\nAvailable GGUF files:")
     for gguf in cache_info["gguf_files"]:
         print(f"  {gguf}")
 
@@ -421,7 +420,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     if cache_info.get("gguf_path"):
         metadata = extract_gguf_metadata(Path(cache_info["gguf_path"]))
         if metadata:
-            print(f"\nGGUF Metadata:")
+            print("\nGGUF Metadata:")
             print(f"  Architecture: {metadata.get('architecture', 'unknown')}")
             print(
                 f"  Parameters: {metadata.get('parameter_count_formatted', 'unknown')}"
@@ -472,7 +471,7 @@ def cmd_show(args: argparse.Namespace) -> int:
                 arch_details.append(f"    Number of layers: {metadata['block_count']}")
 
             if arch_details:
-                print(f"\n  Architecture Details:")
+                print("\n  Architecture Details:")
                 for detail in arch_details:
                     print(detail)
 
@@ -488,7 +487,7 @@ def cmd_show(args: argparse.Namespace) -> int:
                 tokenizer_info.append(f"  EOS token ID: {metadata['tokenizer_eos_id']}")
 
             if tokenizer_info:
-                print(f"\n  Tokenizer:")
+                print("\n  Tokenizer:")
                 for info in tokenizer_info:
                     print(f"  {info}")
 
@@ -507,7 +506,7 @@ def cmd_show(args: argparse.Namespace) -> int:
                 general_info.append(f"  Description: {desc}")
 
             if general_info:
-                print(f"\n  Model Info:")
+                print("\n  Model Info:")
                 for info in general_info:
                     print(f"  {info}")
 
@@ -526,7 +525,7 @@ def cmd_show(args: argparse.Namespace) -> int:
                     display_val = "on" if v else "off"
                 print(f"  --{k} {display_val}")
     else:
-        print(f"\nCould not detect model family")
+        print("\nCould not detect model family")
 
     # Show any model-specific overrides
     if model_name in model_overrides:

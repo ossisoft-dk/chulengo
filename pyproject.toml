@@ -38,4 +38,29 @@ py-modules = ["chulengo"]
 dev = [
     "pytest>=7.0.0",
     "pytest-mock>=3.10.0",
+    "black>=24.0.0",
+    "ruff>=0.5.0",
+]
+
+# --- Formatting & linting (agentic-edit friendly baseline) ---
+# black is the source of truth for style: 4-space indent, 88-col lines.
+# Keep the repo black-clean; do not hand-format. See AGENTS.md.
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+# ruff: lint only (formatting is black's job). Keep the default ruleset light
+# so it flags real problems, not style, and never conflicts with black.
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors (real bugs, not style)
+    "F",   # pyflakes (undefined names, unused imports, etc.)
+    "W",   # pycodestyle warnings
+]
+ignore = [
+    "E501",  # line-too-long: black owns line length
 ]
