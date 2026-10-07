@@ -17,6 +17,16 @@ or quotes to taste. If you are unsure what is valid, run black.
 Never introduce a different indentation width. The historical 3-space style
 has been retired; 4-space is now canonical.
 
+Two practical corollaries, learned the hard way:
+
+- The 3-space/4-space rule is about **Python source only**.
+- Markdown keeps its own existing bullet-continuation width; do not re-indent it to match Python.
+- **Never hand-type runs of whitespace to match or construct indentation.**
+- In editor and agent pipelines, runs of spaces you emit are unreliable and can silently come out wrong.
+- That produces token-valid code that passes black and pytest yet does not match the file ladder.
+- Instead: let black produce the whitespace, or derive indentation programmatically (len minus lstrip, chr(32) times n).
+- When a whitespace edit cannot be found twice, suspect the space run, not the file.
+
 ## Setting keys: the six-spot checklist
 
 A "setting key" is a llama.cpp serve flag chulengo knows about (e.g.
@@ -43,6 +53,7 @@ cleanup may centralize them; see ROADMAP.md.)
 Also keep `create` and `update` in sync — they build their settings dicts
 from the same flag set and should stay identical in shape.
 
+- For Python files the tools are the authority: write, then uv run black and uv run ruff (this is what catches hand-typed whitespace drift). For Markdown keep bullets single-line so no continuation indentation is needed.
 ## Verification loop
 
 After any change, run:

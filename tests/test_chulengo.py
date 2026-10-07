@@ -69,39 +69,53 @@ class TestLoadSettings:
 class TestSaveSettings:
     """Tests for save_settings() function."""
 
-    def test_save_settings_creates_file(self, mocker):
-        """Test that save_settings creates the config file."""
+    def test_save_settings_creates_file(self, mocker, tmp_path):
+        """Test that save_settings creates the config file atomically."""
         settings = {"defaults": {"generic": {"ctx_size": 4096}}, "model_overrides": {}}
 
-        mock_file = mocker.MagicMock()
-        mocker.patch("builtins.open", return_value=mock_file)
-        mocker.patch("pathlib.Path.exists", return_value=False)
-        mocker.patch("pathlib.Path.mkdir")
+        target = tmp_path / "models.yaml"
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
 
         chulengo.save_settings(settings)
 
-        # Verify file was opened for writing
-        mock_file.__enter__.assert_called()
+        assert target.exists()
+        loaded = yaml.safe_load(target.read_text())
+        assert loaded["defaults"]["generic"]["ctx_size"] == 4096
+        # Atomic write must not leave temp files behind
+        leftovers = [p for p in tmp_path.iterdir() if p.name != "models.yaml"]
+        assert leftovers == []
 
-    def test_save_settings_structure(self, mocker):
+    def test_save_settings_structure(self, mocker, tmp_path):
         """Test that save_settings writes YAML with correct structure."""
         settings = {
             "defaults": {"generic": {"ctx_size": 4096}},
             "model_overrides": {"test-model": {"flash_attn": "on"}},
         }
 
-        mock_file = mocker.MagicMock()
-        mock_file.__enter__ = mocker.MagicMock(return_value=mock_file)
-        mock_file.__exit__ = mocker.MagicMock(return_value=False)
-
-        mocker.patch("builtins.open", return_value=mock_file)
-        mocker.patch("pathlib.Path.exists", return_value=False)
-        mocker.patch("pathlib.Path.mkdir")
+        target = tmp_path / "models.yaml"
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
 
         chulengo.save_settings(settings)
 
-        # The write method should be called for YAML output
-        assert mock_file.write.called or True  # yaml.dump does the writing
+        loaded = yaml.safe_load(target.read_text())
+        assert loaded["defaults"]["generic"]["ctx_size"] == 4096
+        assert loaded["model_overrides"]["test-model"]["flash_attn"] == "on"
+
+    def test_save_settings_cleanup_on_failure(self, mocker, tmp_path):
+        """Test that a failed save removes the temp file and raises."""
+        settings = {"defaults": {}, "model_overrides": {}}
+
+        target = tmp_path / "models.yaml"
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
+        # Force yaml.dump to fail mid-write
+        mocker.patch.object(chulengo.yaml, "dump", side_effect=OSError("disk full"))
+
+        with pytest.raises(OSError, match="disk full"):
+            chulengo.save_settings(settings)
+
+        # Target must not exist, and no temp file may be left behind
+        assert not target.exists()
+        assert [p.name for p in tmp_path.iterdir()] == []
 
 
 class TestGetHfCachePath:
@@ -1016,6 +1030,53 @@ class TestModelFamilyCoverage:
     def test_detects_laguna_models(self):
         """Test that Laguna models are detected correctly."""
         assert chulengo.detect_model_family("poolside/Laguna-XS-2.1-GGUF") == "laguna"
+
+
+class TestDoctorConfig:
+    """Tests for doctor_config() — validates config against known families."""
+
+    def test_valid_config_has_no_issues(self, mocker):
+        """A config with only known families and valid keys is clean."""
+        settings = {
+            "defaults": {
+                "generic": {"ctx_size": 4096},
+                "qwen3": {"ctx_size": 16384, "flash_attn": "on"},
+            },
+            "model_overrides": {},
+        }
+        assert chulengo.doctor_config(settings) == []
+
+    def test_unknown_family_is_flagged(self, mocker):
+        """A typo'd family name (e.g. gemmma) should be reported as an issue."""
+        settings = {
+            "defaults": {"gemmma": {"ctx_size": 4096}},
+            "model_overrides": {},
+        }
+        issues = chulengo.doctor_config(settings)
+        assert len(issues) == 1
+        assert "Unknown family 'gemmma'" in issues[0]
+
+    def test_unknown_setting_key_is_flagged(self, mocker):
+        """A setting key that isn't recognised should be reported."""
+        settings = {
+            "defaults": {"qwen3": {"ctx_size": 16384, "bogus_key": "x"}},
+            "model_overrides": {},
+        }
+        issues = chulengo.doctor_config(settings)
+        assert any("unknown setting key 'bogus_key'" in i for i in issues)
+
+    def test_generic_family_is_always_valid(self, mocker):
+        """The 'generic' fallback family must never be flagged as a typo."""
+        settings = {
+            "defaults": {"generic": {"ctx_size": 4096}},
+            "model_overrides": {},
+        }
+        assert chulengo.doctor_config(settings) == []
+
+    def test_empty_defaults_is_clean(self, mocker):
+        """An empty defaults block has no issues."""
+        settings = {"defaults": {}, "model_overrides": {}}
+        assert chulengo.doctor_config(settings) == []
 
 
 if __name__ == "__main__":

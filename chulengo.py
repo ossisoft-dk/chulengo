@@ -10,6 +10,7 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,60 @@ from gguf.utility import model_weight_count_rounded_notation
 # Default settings file path
 SETTINGS_FILE = Path.home() / ".config" / "chulengo" / "models.yaml"
 DEFAULT_SETTINGS_FILE = Path(os.path.realpath(__file__)).parent / "models.yaml"
+
+
+# Known model families. Kept as a module-level constant so family detection and
+# config validation (chulengo doctor) share a single source of truth.
+KNOWN_FAMILIES = [
+    "qwen35moe",
+    "qwen35",
+    "gpt_oss",
+    "qwancoder",
+    "qwopus",
+    "codestral",
+    "llama3_2",
+    "llama3_1",
+    "llama3",
+    "llama",
+    "qwen3",
+    "qwen",
+    "laguna",
+    "mixtral",
+    "mistral",
+    "mistral3",
+    "mistral4",
+    "glm4moe",
+    "glm4",
+    "gemma3",
+    "gemma2",
+    "gemma",
+    "granitemoe",
+    "granite",
+    "granitemoeshared",
+    "phi",
+    "deepseek2",
+    "deepseek",
+    "nemotron_h",
+    "nemotron",
+    "qwencoder",
+]
+
+# "generic" is the always-valid fallback family, so it counts as known.
+VALID_FAMILIES = frozenset({"generic", *KNOWN_FAMILIES})
+
+# Valid setting keys inside a family block in the config.
+VALID_SETTING_KEYS = frozenset(
+    {
+        "ctx_size",
+        "flash_attn",
+        "reasoning",
+        "jinja",
+        "spec_type",
+        "cache_type_k",
+        "cache_type_v",
+        "chat_template_file",
+    }
+)
 
 
 def load_settings() -> dict:
@@ -63,18 +118,38 @@ def load_settings() -> dict:
         }
 
     # Save to user config if we're using defaults (first run)
-    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(SETTINGS_FILE, "w") as f:
-        yaml.dump(settings, f, default_flow_style=False)
+    save_settings(settings)
 
     return settings
 
 
 def save_settings(settings: dict) -> None:
-    """Save settings to the user's config file."""
+    """Save settings to the user's config file.
+
+    Uses atomic write (write to temp file in same directory, then rename)
+    so an interrupted save never leaves a corrupt models.yaml behind.
+    """
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(SETTINGS_FILE, "w") as f:
-        yaml.dump(settings, f, default_flow_style=False)
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w",
+        dir=SETTINGS_FILE.parent,
+        prefix=SETTINGS_FILE.name + ".",
+        suffix=".tmp",
+        delete=False,
+    )
+    try:
+        with tmp as f:
+            yaml.dump(settings, f, default_flow_style=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp.name, SETTINGS_FILE)
+    except BaseException:
+        tmp.close()
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        raise
 
 
 def get_hf_cache_path() -> str | None:
@@ -285,6 +360,42 @@ def get_default_settings(model_name: str) -> dict:
 
     # Fall back to generic defaults
     return defaults.get("generic", {})
+
+
+def doctor_config(settings: dict) -> list[str]:
+    """Validate a loaded config against known families and setting keys.
+
+    Returns a list of human-readable issues (empty list == config is valid).
+    Checks two things:
+        1. Every family key under `defaults` is a known family (flags typos).
+        2. Every setting key inside a family block is a recognised setting
+           (flags unknown setting keys).
+    """
+    issues: list[str] = []
+
+    defaults = settings.get("defaults", {}) or {}
+
+    # 1. Family keys must be known (catches e.g. "qwen3 " or "gemmma").
+    for family in sorted(defaults):
+        if family == "generic":
+            # Always-valid fallback family; not a typo even if unused.
+            continue
+        if family not in VALID_FAMILIES:
+            known = ", ".join(sorted(VALID_FAMILIES))
+            issues.append(
+                f"Unknown family '{family}' — likely a typo. "
+                f"Known families: {known}"
+            )
+
+    # 2. Setting keys inside each family block must be recognised.
+    for family, cfg in defaults.items():
+        if not isinstance(cfg, dict):
+            continue
+        for key in cfg:
+            if key not in VALID_SETTING_KEYS:
+                issues.append(f"Family '{family}': unknown setting key '{key}'")
+
+    return issues
 
 
 def get_model_cache_info(model_name: str) -> dict | None:
@@ -809,6 +920,26 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Validate the user config against known families and setting keys."""
+    settings = load_settings()
+    issues = doctor_config(settings)
+
+    if not issues:
+        print("OK: config is valid. No issues found.")
+        return 0
+
+    print(f"Found {len(issues)} issue(s) in your config:\n")
+    for issue in issues:
+        print(f"    - {issue}")
+
+    print(
+        "Tip: run 'chulengo show' to inspect a model, or edit "
+        "~/.config/chulengo/models.yaml directly."
+    )
+    return 1
+
+
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -899,6 +1030,12 @@ def main() -> int:
     serve_parser.add_argument("--cache-type-v", help="Override cache type for values")
     serve_parser.add_argument("--chat-template-file", help="Path to chat template file")
     serve_parser.set_defaults(func=cmd_serve)
+
+    # doctor command
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="Validate the user config against known families"
+    )
+    doctor_parser.set_defaults(func=cmd_doctor)
 
     args = parser.parse_args()
     return args.func(args)

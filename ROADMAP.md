@@ -24,7 +24,7 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
 ## Next (near-term)
 
 - **Config file hygiene**
-   - Atomic writes (write-to-temp + rename) so an interrupted `create`/`update`
+   - [x] Atomic writes (write-to-temp + rename) so an interrupted `create`/
      never corrupts `models.yaml`
    - Preserve comments in user config on update (or offer a `chulengo config
      view` that annotates instead)

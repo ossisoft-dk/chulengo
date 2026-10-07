@@ -67,6 +67,12 @@ defaults:
     reasoning: off
     jinja: on
 
+  phi:
+    ctx_size: 2048
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
   # Llama models (older mistral/mixtral use llama architecture)
   llama:
     ctx_size: 4096
@@ -173,6 +179,17 @@ defaults:
     reasoning: off
     jinja: on
 
+  mistral:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  mixtral:
+    ctx_size: 32768
+    flash_attn: on
+    reasoning: off
+    jinja: on
   # Mistral models (mistral3 = new Mistral, mistral4 = new Mixtral)
   mistral3:
     ctx_size: 8192

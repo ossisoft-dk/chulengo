@@ -47,6 +47,19 @@ uv tool install -e .
 
 This installs chulengo and all its dependencies (`pyyaml`, `gguf`) in an isolated environment, making the `chulengo` command immediately available in your terminal.
 
+> **Updating after changes**
+>
+> `uv tool install -e .` installs a copy of the code, so after editing `chulengo.py`
+> you need to reinstall to pick up your changes:
+>
+> ```bash
+> uv tool install -e . --force
+> ```
+>
+> If `chulengo` suddenly reports a command that you know you just added (e.g.
+> `doctor`), it's almost certainly this stale copy — reinstall as above and it
+> will reappear.
+
 ## Uninstall
 
 ```bash
