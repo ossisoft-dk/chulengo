@@ -1157,5 +1157,39 @@ class TestDoctorConfig:
         assert chulengo.doctor_config(settings) == []
 
 
+class TestServeJinja:
+    """Tests for how `serve --jinja` combines with jinja from the config."""
+
+    def _serve(self, mocker, argv, config_jinja):
+        mocker.patch.object(sys, "argv", ["chulengo", "serve", "test/model", *argv])
+        mocker.patch(
+            "chulengo.load_settings",
+            return_value={"defaults": {}, "model_overrides": {}},
+        )
+        mocker.patch(
+            "chulengo.get_default_settings", return_value={"jinja": config_jinja}
+        )
+        mock_popen = mocker.patch("chulengo.subprocess.Popen")
+        mock_popen.return_value.wait.return_value = 0
+
+        assert chulengo.main() == 0
+        return mock_popen.call_args.args[0]
+
+    def test_config_jinja_applies_without_flag(self, mocker):
+        """Test that jinja: on in the config is used when --jinja is not passed."""
+        cmd = self._serve(mocker, [], config_jinja="on")
+        assert "--jinja" in cmd
+
+    def test_config_jinja_off_without_flag(self, mocker):
+        """Test that jinja: off in the config stays off when --jinja is not passed."""
+        cmd = self._serve(mocker, [], config_jinja="off")
+        assert "--jinja" not in cmd
+
+    def test_flag_enables_jinja_over_config(self, mocker):
+        """Test that --jinja turns jinja on even when the config has it off."""
+        cmd = self._serve(mocker, ["--jinja"], config_jinja="off")
+        assert "--jinja" in cmd
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

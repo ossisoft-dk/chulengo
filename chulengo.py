@@ -1034,8 +1034,9 @@ def main() -> int:
     serve_parser.add_argument(
         "--reasoning", choices=["on", "off"], help="Override reasoning"
     )
+    # default=None (not False) so an absent flag leaves the config's jinja alone
     serve_parser.add_argument(
-        "--jinja", action="store_true", help="Enable Jinja template"
+        "--jinja", action="store_true", default=None, help="Enable Jinja template"
     )
     serve_parser.add_argument("--spec-type", help="Override speculative decoding type")
     serve_parser.add_argument("--cache-type-k", help="Override cache type for keys")
