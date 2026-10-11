@@ -56,6 +56,7 @@ KNOWN_FAMILIES = [
     "deepseek",
     "nemotron_h",
     "nemotron",
+    "lfm2",
     "qwencoder",
 ]
 
@@ -314,6 +315,7 @@ def detect_model_family(model_name: str) -> str | None:
         "deepseek",
         "nemotron_h",
         "nemotron",
+        "lfm2",
         "qwencoder",
     ]
 

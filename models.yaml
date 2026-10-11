@@ -221,5 +221,12 @@ defaults:
     cache_type_k: q8_0
     cache_type_v: q8_0
 
+  # Liquid AI LFM2 / LFM2.5 models (hybrid conv + attention)
+  lfm2:
+    ctx_size: 32768
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
 # Model-specific overrides can be added here
 model_overrides: {}

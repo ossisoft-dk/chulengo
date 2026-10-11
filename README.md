@@ -186,6 +186,7 @@ Chulengo includes sensible defaults for these model types:
 | glm4moe    | ctx-size=32768, flash-attn=on, jinja, cache-type-k=q8_0, cache-type-v=q8_0, spec-type=draft |
 | granite    | ctx-size=4096, flash-attn=on, jinja                                                         |
 | codestral  | ctx-size=32768, flash-attn=on, jinja, cache-type-k=q8_0, cache-type-v=q8_0                  |
+| lfm2       | ctx-size=32768, flash-attn=on, jinja                                                        |
 
 ## Configuration File
 

@@ -270,6 +270,11 @@ class TestDetectModelFamily:
         """Test detection of GPT-OSS models."""
         assert chulengo.detect_model_family("openai/gpt-oss-20b") == "gpt_oss"
 
+    def test_detects_lfm2(self):
+        """Test detection of Liquid AI LFM2 and LFM2.5 models."""
+        assert chulengo.detect_model_family("LiquidAI/LFM2-1.2B-GGUF") == "lfm2"
+        assert chulengo.detect_model_family("LiquidAI/LFM2.5-230M-GGUF") == "lfm2"
+
     def test_detects_unknown_type(self):
         """Test that unknown models return None."""
         assert chulengo.detect_model_family("unknown/model-name") is None
@@ -1122,6 +1127,13 @@ class TestDoctorConfig:
             },
             "model_overrides": {},
         }
+        assert chulengo.doctor_config(settings) == []
+
+    def test_shipped_models_yaml_is_clean(self):
+        """Every family in the shipped models.yaml must be a known family."""
+        shipped = Path(__file__).parent.parent / "models.yaml"
+        settings = chulengo.ruamel.yaml.YAML().load(shipped.read_text())
+        assert "lfm2" in settings["defaults"]
         assert chulengo.doctor_config(settings) == []
 
     def test_unknown_family_is_flagged(self, mocker):
