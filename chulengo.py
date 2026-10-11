@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import yaml
+import ruamel.yaml
 from gguf import GGUFReader
 from gguf.utility import model_weight_count_rounded_notation
 
@@ -81,11 +81,14 @@ def load_settings() -> dict:
     """Load settings from user config, falling back to package defaults.
 
     If no settings file exists, copies models.yaml from source to user config.
+    Preserves comments and formatting using ruamel.yaml round-trip loader.
     """
-    # If user config exists, use it
+    # If user config exists, use it with round-trip loader to preserve comments
     if SETTINGS_FILE.exists():
+        yaml = ruamel.yaml.YAML()
+        yaml.preserve_quotes = True
         with open(SETTINGS_FILE) as f:
-            settings = yaml.safe_load(f) or {}
+            settings = yaml.load(f) or {}
         return settings
 
     # Try to find and load defaults from multiple sources
@@ -99,8 +102,10 @@ def load_settings() -> dict:
     for source in sources:
         if source.exists():
             try:
+                yaml = ruamel.yaml.YAML()
+                yaml.preserve_quotes = True
                 with open(source) as f:
-                    settings = yaml.safe_load(f) or {
+                    settings = yaml.load(f) or {
                         "defaults": {},
                         "model_overrides": {},
                     }
@@ -128,6 +133,7 @@ def save_settings(settings: dict) -> None:
 
     Uses atomic write (write to temp file in same directory, then rename)
     so an interrupted save never leaves a corrupt models.yaml behind.
+    Preserves comments and formatting using ruamel.yaml round-trip dumper.
     """
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = tempfile.NamedTemporaryFile(
@@ -138,10 +144,12 @@ def save_settings(settings: dict) -> None:
         delete=False,
     )
     try:
-        with tmp as f:
-            yaml.dump(settings, f, default_flow_style=False)
-            f.flush()
-            os.fsync(f.fileno())
+        yaml = ruamel.yaml.YAML()
+        yaml.preserve_quotes = True
+        # Use round-trip dumper to preserve comments and formatting
+        yaml.dump(settings, tmp)
+        tmp.flush()
+        os.fsync(tmp.fileno())
         os.replace(tmp.name, SETTINGS_FILE)
     except BaseException:
         tmp.close()
@@ -651,6 +659,15 @@ def cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _is_on(value: Any) -> bool:
+    """Interpret a config switch that may be a bool or an on/off-style string.
+
+    The config is loaded as YAML 1.2, so `on`/`off` arrive as strings, while
+    older configs or CLI flags may hold real booleans.
+    """
+    return str(value).lower() in ("true", "on", "yes", "1")
+
+
 def build_llama_command(
     model_name: str,
     port: int | None = None,
@@ -712,20 +729,15 @@ def build_llama_command(
     # Handle flash_attn - can be boolean or string
     flash_attn_val = all_settings.get("flash_attn")
     if flash_attn_val is not None:
-        val_str = (
-            "on" if str(flash_attn_val).lower() in ("true", "on", "yes", "1") else "off"
-        )
-        cmd.extend(["--flash-attn", val_str])
+        cmd.extend(["--flash-attn", "on" if _is_on(flash_attn_val) else "off"])
 
     # Handle reasoning - can be boolean or string
     reasoning_val = all_settings.get("reasoning")
     if reasoning_val is not None:
-        val_str = (
-            "on" if str(reasoning_val).lower() in ("true", "on", "yes", "1") else "off"
-        )
-        cmd.extend(["--reasoning", val_str])
+        cmd.extend(["--reasoning", "on" if _is_on(reasoning_val) else "off"])
 
-    if all_settings.get("jinja"):
+    # Handle jinja - can be boolean or string ("off" must not enable it)
+    if _is_on(all_settings.get("jinja")):
         cmd.append("--jinja")
 
     if all_settings.get("spec_type"):

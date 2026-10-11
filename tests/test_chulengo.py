@@ -97,7 +97,9 @@ class TestSaveSettings:
 
         chulengo.save_settings(settings)
 
-        loaded = yaml.safe_load(target.read_text())
+        # Read back with the same YAML 1.2 loader chulengo uses; PyYAML (1.1)
+        # would turn an unquoted `on` into True.
+        loaded = chulengo.ruamel.yaml.YAML().load(target.read_text())
         assert loaded["defaults"]["generic"]["ctx_size"] == 4096
         assert loaded["model_overrides"]["test-model"]["flash_attn"] == "on"
 
@@ -108,7 +110,9 @@ class TestSaveSettings:
         target = tmp_path / "models.yaml"
         mocker.patch.object(chulengo, "SETTINGS_FILE", target)
         # Force yaml.dump to fail mid-write
-        mocker.patch.object(chulengo.yaml, "dump", side_effect=OSError("disk full"))
+        mocker.patch.object(
+            chulengo.ruamel.yaml, "YAML", side_effect=OSError("disk full")
+        )
 
         with pytest.raises(OSError, match="disk full"):
             chulengo.save_settings(settings)
@@ -413,6 +417,35 @@ class TestBuildLlamaCommand:
                     result = chulengo.build_llama_command("test/model")
 
         assert "--jinja" in result
+
+    @pytest.mark.parametrize("value", ["off", False, None])
+    def test_jinja_off_omits_flag(self, mocker, value):
+        """Test that jinja: off (a string under YAML 1.2) does not enable jinja."""
+        settings = {"defaults": {}, "model_overrides": {}}
+
+        with patch("chulengo.load_settings", return_value=settings):
+            with patch("chulengo.detect_model_family", return_value=None):
+                with patch(
+                    "chulengo.get_default_settings", return_value={"jinja": value}
+                ):
+                    result = chulengo.build_llama_command("test/model")
+
+        assert "--jinja" not in result
+
+    def test_on_off_strings_from_yaml(self, mocker):
+        """Test that on/off strings loaded from the config map to llama flags."""
+        settings = {"defaults": {}, "model_overrides": {}}
+
+        with patch("chulengo.load_settings", return_value=settings):
+            with patch("chulengo.detect_model_family", return_value=None):
+                with patch(
+                    "chulengo.get_default_settings",
+                    return_value={"flash_attn": "on", "reasoning": "off"},
+                ):
+                    result = chulengo.build_llama_command("test/model")
+
+        assert result[result.index("--flash-attn") + 1] == "on"
+        assert result[result.index("--reasoning") + 1] == "off"
 
     def test_merges_settings_correctly(self, mocker):
         """Test that user overrides merge with defaults."""
@@ -897,6 +930,51 @@ class TestCmdUpdate:
         result = chulengo.cmd_update(mock_args)
 
         assert result == 0
+
+    def test_preserves_comments_and_formatting(self, mocker, tmp_path):
+        """Test that a real update round-trips comments and on/off values."""
+        target = tmp_path / "models.yaml"
+        target.write_text(
+            "# top comment\n"
+            "defaults:\n"
+            "  generic:\n"
+            "    flash_attn: off  # inline default\n"
+            "    jinja: off\n"
+            "\n"
+            "model_overrides:\n"
+            "  # tuned for my box\n"
+            "  existing/model:\n"
+            "    ctx_size: 8192  # inline override\n"
+            "    flash_attn: on\n"
+        )
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
+
+        mock_args = MagicMock()
+        mock_args.model = "existing/model"
+        mock_args.alias = None
+        mock_args.ctx_size = 16384
+        mock_args.flash_attn = None
+        mock_args.reasoning = None
+        mock_args.jinja = False
+        mock_args.spec_type = None
+        mock_args.cache_type_k = None
+        mock_args.cache_type_v = None
+        mock_args.chat_template_file = None
+
+        result = chulengo.cmd_update(mock_args)
+
+        assert result == 0
+        text = target.read_text()
+        assert "# top comment" in text
+        assert "# inline default" in text
+        assert "# tuned for my box" in text
+        assert "# inline override" in text
+        assert "ctx_size: 16384" in text
+        # on/off values are left as written, not rewritten or quoted
+        assert "flash_attn: off" in text
+        assert "jinja: off" in text
+        assert "flash_attn: on" in text
+        assert '"on"' not in text and '"off"' not in text
 
 
 class TestCmdLs:
