@@ -63,6 +63,9 @@ KNOWN_FAMILIES = [
 # "generic" is the always-valid fallback family, so it counts as known.
 VALID_FAMILIES = frozenset({"generic", *KNOWN_FAMILIES})
 
+# Valid top-level keys in the config file.
+VALID_TOP_LEVEL_KEYS = frozenset({"defaults", "model_overrides"})
+
 # Valid setting keys inside a family block in the config.
 VALID_SETTING_KEYS = frozenset(
     {
@@ -76,6 +79,11 @@ VALID_SETTING_KEYS = frozenset(
         "chat_template_file",
     }
 )
+
+# Keys allowed inside a `model_overrides` entry. Model overrides may carry an
+# `alias` (written by `create`/`update`), which is meaningless in a family
+# default block, so this is a superset of VALID_SETTING_KEYS.
+VALID_OVERRIDE_KEYS = VALID_SETTING_KEYS | frozenset({"alias"})
 
 
 def load_settings() -> dict:
@@ -372,38 +380,84 @@ def get_default_settings(model_name: str) -> dict:
     return defaults.get("generic", {})
 
 
-def doctor_config(settings: dict) -> list[str]:
+def _validate_setting_block(
+    block: Any,
+    context: str,
+    valid_keys: frozenset[str],
+    issues: list[str],
+) -> None:
+    """Check one settings block (a family default or a model override).
+
+    Appends human-readable issues for a non-mapping block or unknown keys.
+    """
+    if not isinstance(block, dict):
+        issues.append(
+            f"{context}: expected a mapping of settings, got {type(block).__name__}"
+        )
+        return
+    for key in block:
+        if key not in valid_keys:
+            issues.append(f"{context}: unknown setting key '{key}'")
+
+
+def doctor_config(settings: Any) -> list[str]:
     """Validate a loaded config against known families and setting keys.
 
     Returns a list of human-readable issues (empty list == config is valid).
-    Checks two things:
-        1. Every family key under `defaults` is a known family (flags typos).
-        2. Every setting key inside a family block is a recognised setting
-           (flags unknown setting keys).
+    Checks the whole user config:
+        1. Only known top-level keys are present (`defaults`,
+           `model_overrides`).
+        2. Every family key under `defaults` is a known family (flags typos).
+        3. Every setting key inside a family block is a recognised setting.
+        4. Every setting key inside a `model_overrides` entry is recognised
+           (`alias` is allowed there, but not in family defaults).
+
+    Malformed structures (non-mapping blocks) are reported as issues rather
+    than raising, so `chulengo doctor` never tracebacks on a hand-edited file.
     """
     issues: list[str] = []
 
-    defaults = settings.get("defaults", {}) or {}
+    if not isinstance(settings, dict):
+        return [f"Config root must be a mapping, got {type(settings).__name__}"]
 
-    # 1. Family keys must be known (catches e.g. "qwen3 " or "gemmma").
-    for family in sorted(defaults):
-        if family == "generic":
-            # Always-valid fallback family; not a typo even if unused.
-            continue
-        if family not in VALID_FAMILIES:
-            known = ", ".join(sorted(VALID_FAMILIES))
-            issues.append(
-                f"Unknown family '{family}' — likely a typo. "
-                f"Known families: {known}"
+    # 1. Unknown top-level keys are almost always typos. key=str keeps this
+    # from raising on mixed-type YAML keys (e.g. an int where a name belongs).
+    for key in sorted(settings, key=str):
+        if key not in VALID_TOP_LEVEL_KEYS:
+            known = ", ".join(sorted(VALID_TOP_LEVEL_KEYS))
+            issues.append(f"Unknown top-level key '{key}'. Known keys: {known}")
+
+    # 2-3. Family keys must be known (catches e.g. "qwen3 " or "gemmma").
+    defaults = settings.get("defaults", {}) or {}
+    if not isinstance(defaults, dict):
+        issues.append(f"'defaults' must be a mapping, got {type(defaults).__name__}")
+    else:
+        for family in sorted(defaults, key=str):
+            if family == "generic":
+                # Always-valid fallback family; not a typo even if unused.
+                continue
+            if family not in VALID_FAMILIES:
+                known = ", ".join(sorted(VALID_FAMILIES))
+                issues.append(
+                    f"Unknown family '{family}' — likely a typo. "
+                    f"Known families: {known}"
+                )
+        for family, cfg in defaults.items():
+            _validate_setting_block(
+                cfg, f"Family '{family}'", VALID_SETTING_KEYS, issues
             )
 
-    # 2. Setting keys inside each family block must be recognised.
-    for family, cfg in defaults.items():
-        if not isinstance(cfg, dict):
-            continue
-        for key in cfg:
-            if key not in VALID_SETTING_KEYS:
-                issues.append(f"Family '{family}': unknown setting key '{key}'")
+    # 4. Per-model overrides (alias is valid here, but not in defaults).
+    overrides = settings.get("model_overrides", {}) or {}
+    if not isinstance(overrides, dict):
+        issues.append(
+            f"'model_overrides' must be a mapping, got {type(overrides).__name__}"
+        )
+    else:
+        for model, cfg in overrides.items():
+            _validate_setting_block(
+                cfg, f"Model override '{model}'", VALID_OVERRIDE_KEYS, issues
+            )
 
     return issues
 
@@ -934,10 +988,41 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return 1
 
 
+def load_user_config() -> tuple[dict | None, str | None]:
+    """Read the user config file directly, without seeding defaults.
+
+    Unlike load_settings(), this never creates or writes the config file: a
+    validation command must not have side effects. Returns a ``(settings,
+    error)`` tuple:
+
+    * file missing -> ``(None, None)`` (there is nothing to validate)
+    * valid YAML   -> ``(settings, None)``
+    * bad YAML     -> ``(None, "<message>")``
+    """
+    if not SETTINGS_FILE.exists():
+        return None, None
+
+    yaml = ruamel.yaml.YAML()
+    yaml.preserve_quotes = True
+    try:
+        with open(SETTINGS_FILE) as f:
+            return yaml.load(f) or {}, None
+    except Exception as e:
+        return None, f"Could not parse config file {SETTINGS_FILE}: {e}"
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
-    """Validate the user config against known families and setting keys."""
-    settings = load_settings()
-    issues = doctor_config(settings)
+    """Validate the user config without creating or modifying it."""
+    settings, error = load_user_config()
+
+    if settings is None and error is None:
+        print(
+            f"No user config found at {SETTINGS_FILE}; nothing to validate. "
+            "Defaults are used until you run 'chulengo create'."
+        )
+        return 0
+
+    issues = [error] if error is not None else doctor_config(settings)
 
     if not issues:
         print("OK: config is valid. No issues found.")
@@ -949,7 +1034,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     print(
         "Tip: run 'chulengo show' to inspect a model, or edit "
-        "~/.config/chulengo/models.yaml directly."
+        f"{SETTINGS_FILE} directly."
     )
     return 1
 
@@ -1048,7 +1133,7 @@ def main() -> int:
 
     # doctor command
     doctor_parser = subparsers.add_parser(
-        "doctor", help="Validate the user config against known families"
+        "doctor", help="Validate the user config (families, setting keys)"
     )
     doctor_parser.set_defaults(func=cmd_doctor)
 

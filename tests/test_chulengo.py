@@ -1168,6 +1168,135 @@ class TestDoctorConfig:
         settings = {"defaults": {}, "model_overrides": {}}
         assert chulengo.doctor_config(settings) == []
 
+    def test_unknown_override_key_is_flagged(self):
+        """A typo'd setting key in a model override should be reported."""
+        settings = {
+            "defaults": {},
+            "model_overrides": {"org/model": {"ctx_siz": 4096}},
+        }
+        issues = chulengo.doctor_config(settings)
+        assert any(
+            "Model override 'org/model'" in i and "unknown setting key 'ctx_siz'" in i
+            for i in issues
+        )
+
+    def test_alias_is_valid_in_model_overrides(self):
+        """`alias` is a legitimate model-override key, not an unknown setting."""
+        settings = {
+            "defaults": {},
+            "model_overrides": {"org/model": {"alias": "mymodel"}},
+        }
+        assert chulengo.doctor_config(settings) == []
+
+    def test_alias_in_family_defaults_is_flagged(self):
+        """`alias` is only valid per-model, not inside a family default block."""
+        settings = {
+            "defaults": {"qwen3": {"alias": "mymodel"}},
+            "model_overrides": {},
+        }
+        issues = chulengo.doctor_config(settings)
+        assert any("unknown setting key 'alias'" in i for i in issues)
+
+    def test_unknown_top_level_key_is_flagged(self):
+        """An unknown top-level key (e.g. `default`) should be reported."""
+        settings = {
+            "default": {"qwen3": {"ctx_size": 4096}},
+            "defaults": {},
+            "model_overrides": {},
+        }
+        issues = chulengo.doctor_config(settings)
+        assert any("Unknown top-level key 'default'" in i for i in issues)
+
+    def test_malformed_defaults_is_reported_not_crashed(self):
+        """A non-mapping `defaults` (e.g. a list) must not raise."""
+        settings = {"defaults": ["qwen3"], "model_overrides": {}}
+        issues = chulengo.doctor_config(settings)
+        assert any("'defaults' must be a mapping" in i for i in issues)
+
+    def test_non_mapping_family_block_is_reported(self):
+        """A family block that isn't a mapping should be reported."""
+        settings = {
+            "defaults": {"qwen3": ["ctx_size"]},
+            "model_overrides": {},
+        }
+        issues = chulengo.doctor_config(settings)
+        assert any("Family 'qwen3': expected a mapping" in i for i in issues)
+
+    def test_non_mapping_model_overrides_is_reported(self):
+        """A non-mapping `model_overrides` should be reported."""
+        settings = {"defaults": {}, "model_overrides": ["org/model"]}
+        issues = chulengo.doctor_config(settings)
+        assert any("'model_overrides' must be a mapping" in i for i in issues)
+
+    def test_non_mapping_config_root_is_reported(self):
+        """A config that isn't a mapping at all should be reported."""
+        assert chulengo.doctor_config(None) == [
+            "Config root must be a mapping, got NoneType"
+        ]
+
+    def test_non_string_top_level_key_does_not_crash(self):
+        """Mixed-type top-level keys must not raise in sorted()."""
+        settings = {1: {}, "defaults": {}, "model_overrides": {}}
+        issues = chulengo.doctor_config(settings)
+        assert any("Unknown top-level key '1'" in i for i in issues)
+
+    def test_non_string_family_key_does_not_crash(self):
+        """Mixed-type family keys must not raise in sorted()."""
+        settings = {"defaults": {1: {}, "qwen3": {}}, "model_overrides": {}}
+        issues = chulengo.doctor_config(settings)
+        assert any("Unknown family '1'" in i for i in issues)
+
+
+class TestDoctorCommand:
+    """Tests for cmd_doctor() and load_user_config()."""
+
+    def test_missing_config_reports_and_writes_nothing(self, mocker, tmp_path, capsys):
+        """On a fresh install doctor must not seed or write a config file."""
+        target = tmp_path / "chulengo" / "models.yaml"
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
+
+        rc = chulengo.cmd_doctor(None)
+
+        assert rc == 0
+        assert "No user config found" in capsys.readouterr().out
+        assert not target.exists()
+        assert not target.parent.exists()
+
+    def test_invalid_yaml_is_reported_not_crashed(self, mocker, tmp_path, capsys):
+        """Broken YAML should be reported as an issue, not a traceback."""
+        target = tmp_path / "models.yaml"
+        target.write_text("defaults: [unclosed\n")
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
+
+        rc = chulengo.cmd_doctor(None)
+
+        assert rc == 1
+        assert "Could not parse config file" in capsys.readouterr().out
+
+    def test_valid_config_reports_ok(self, mocker, tmp_path, capsys):
+        """A valid user config should pass."""
+        target = tmp_path / "models.yaml"
+        target.write_text(
+            "defaults:\n  qwen3:\n    ctx_size: 4096\nmodel_overrides: {}\n"
+        )
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
+
+        rc = chulengo.cmd_doctor(None)
+
+        assert rc == 0
+        assert "OK: config is valid" in capsys.readouterr().out
+
+    def test_load_user_config_parses_valid_yaml(self, mocker, tmp_path):
+        """load_user_config returns the parsed mapping on success."""
+        target = tmp_path / "models.yaml"
+        target.write_text("defaults: {}\nmodel_overrides: {}\n")
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
+
+        settings, error = chulengo.load_user_config()
+
+        assert error is None
+        assert settings == {"defaults": {}, "model_overrides": {}}
+
 
 class TestServeJinja:
     """Tests for how `serve --jinja` combines with jinja from the config."""

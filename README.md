@@ -126,6 +126,20 @@ chulengo delete my-model-name
 
 **Note:** The model must have existing settings to delete.
 
+### Check Configuration
+
+Validate your settings file (`~/.config/chulengo/models.yaml`) without editing
+it by hand. `doctor` flags unknown model families, unknown setting keys in
+defaults and model overrides, unknown top-level keys, and malformed blocks:
+
+```bash
+chulengo doctor
+```
+
+It exits non-zero when it finds issues, so it is safe to use in a script or
+shell prompt. It only reads your config — it never writes or seeds a file, and
+reports (rather than crashes on) missing or invalid YAML.
+
 ### Serve a Model
 
 Serve a model with llama.cpp, using detected defaults:

@@ -28,8 +28,9 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
      never corrupts `models.yaml`
    - [x] Preserve comments in user config on update (or offer a `chulengo config
      view` that annotates instead)
-   - `chulengo doctor`: validate the user config against known families and
-     flag typos/unknown keys
+   - [x] `chulengo doctor`: validate the user config against known families and
+     flag typos/unknown keys in `defaults` and `model_overrides`, unknown
+     top-level keys, and malformed blocks
    - Config override: point chulengo at a different config file, either via a
      `CHULENGO_CONFIG` env var or a `--config <path>` flag. The config path is
      currently a hardcoded module constant, so this is needed for testing
