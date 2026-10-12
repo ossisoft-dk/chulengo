@@ -206,6 +206,22 @@ Chulengo includes sensible defaults for these model types:
 
 Settings are stored in `~/.config/chulengo/models.yaml`. You can also customize the defaults file in the same directory as `chulengo.py`.
 
+### Alternate Config Location
+
+To use a config file other than the default — for a per-project config or for
+pointing tests at an alternate file — set `CHULENGO_CONFIG` to a path, or pass
+`--config <path>` to any command:
+
+```bash
+CHULENGO_CONFIG=./config/models.yaml chulengo show my-model
+chulengo --config ./config/models.yaml doctor
+chulengo doctor --config ./config/models.yaml
+```
+
+The `--config` flag takes precedence over the `CHULENGO_CONFIG` environment
+variable, which takes precedence over the default location. `~` is expanded and
+relative paths are resolved against the current working directory.
+
 ## Goals
 
 - **Performance**: Be an almost invisible layer on top of llama.cpp

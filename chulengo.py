@@ -18,8 +18,12 @@ import ruamel.yaml
 from gguf import GGUFReader
 from gguf.utility import model_weight_count_rounded_notation
 
-# Default settings file path
-SETTINGS_FILE = Path.home() / ".config" / "chulengo" / "models.yaml"
+# Default settings file path. The active path can be overridden per invocation
+# with `--config` or the CHULENGO_CONFIG environment variable; see
+# resolve_settings_file(). SETTINGS_FILE is a module global so existing callers
+# keep using it, and main() points it at the resolved path before dispatch.
+DEFAULT_SETTINGS_FILE_PATH = Path.home() / ".config" / "chulengo" / "models.yaml"
+SETTINGS_FILE = DEFAULT_SETTINGS_FILE_PATH
 DEFAULT_SETTINGS_FILE = Path(os.path.realpath(__file__)).parent / "models.yaml"
 
 
@@ -84,6 +88,33 @@ VALID_SETTING_KEYS = frozenset(
 # `alias` (written by `create`/`update`), which is meaningless in a family
 # default block, so this is a superset of VALID_SETTING_KEYS.
 VALID_OVERRIDE_KEYS = VALID_SETTING_KEYS | frozenset({"alias"})
+
+
+def resolve_settings_file(cli_path: str | None = None) -> Path:
+    """Resolve which config file to use, without side effects.
+
+    Precedence, highest first:
+
+    1. ``cli_path`` (the ``--config`` flag)
+    2. the ``CHULENGO_CONFIG`` environment variable
+    3. the default ``~/.config/chulengo/models.yaml``
+
+    Relative paths are left relative (resolved against the current working
+    directory) and ``~`` is expanded.
+    """
+    if cli_path:
+        return Path(cli_path).expanduser()
+    env_path = os.environ.get("CHULENGO_CONFIG")
+    if env_path:
+        return Path(env_path).expanduser()
+    return DEFAULT_SETTINGS_FILE_PATH
+
+
+def set_settings_file(cli_path: str | None = None) -> Path:
+    """Point the module at the resolved config file and return that path."""
+    global SETTINGS_FILE
+    SETTINGS_FILE = resolve_settings_file(cli_path)
+    return SETTINGS_FILE
 
 
 def load_settings() -> dict:
@@ -1041,24 +1072,46 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def main() -> int:
     """Main entry point."""
+    # Shared option so `--config` is accepted both before and after the
+    # subcommand (e.g. `chulengo --config X ls` and `chulengo ls --config X`).
+    # SUPPRESS keeps the subparser from clobbering a value given earlier.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--config",
+        metavar="PATH",
+        default=argparse.SUPPRESS,
+        help=(
+            "Path to the config file (models.yaml). Overrides the "
+            "CHULENGO_CONFIG environment variable and the default "
+            "~/.config/chulengo/models.yaml"
+        ),
+    )
+
     parser = argparse.ArgumentParser(
         prog="chulengo",
         description="A small and wild llama.cpp wrapper for serving HuggingFace models",
+        parents=[common],
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # ls command
-    ls_parser = subparsers.add_parser("ls", help="List available models from HF cache")
+    ls_parser = subparsers.add_parser(
+        "ls", help="List available models from HF cache", parents=[common]
+    )
     ls_parser.set_defaults(func=cmd_ls)
 
     # show command
-    show_parser = subparsers.add_parser("show", help="Show model details and settings")
+    show_parser = subparsers.add_parser(
+        "show", help="Show model details and settings", parents=[common]
+    )
     show_parser.add_argument("model", help="Model name to show")
     show_parser.set_defaults(func=cmd_show)
 
     # create command
-    create_parser = subparsers.add_parser("create", help="Create settings for a model")
+    create_parser = subparsers.add_parser(
+        "create", help="Create settings for a model", parents=[common]
+    )
     create_parser.add_argument("model", help="Model name")
     create_parser.add_argument("--alias", "-a", help="Alias for the model")
     create_parser.add_argument("--ctx-size", type=int, help="Context size")
@@ -1080,7 +1133,9 @@ def main() -> int:
     create_parser.set_defaults(func=cmd_create)
 
     # update command
-    update_parser = subparsers.add_parser("update", help="Update settings for a model")
+    update_parser = subparsers.add_parser(
+        "update", help="Update settings for a model", parents=[common]
+    )
     update_parser.add_argument("model", help="Model name")
     update_parser.add_argument("--alias", "-a", help="Alias for the model")
     update_parser.add_argument("--ctx-size", type=int, help="Context size")
@@ -1102,12 +1157,16 @@ def main() -> int:
     update_parser.set_defaults(func=cmd_update)
 
     # delete command
-    delete_parser = subparsers.add_parser("delete", help="Delete settings for a model")
+    delete_parser = subparsers.add_parser(
+        "delete", help="Delete settings for a model", parents=[common]
+    )
     delete_parser.add_argument("target", help="Model name to delete settings for")
     delete_parser.set_defaults(func=cmd_delete)
 
     # serve command
-    serve_parser = subparsers.add_parser("serve", help="Serve a model with llama.cpp")
+    serve_parser = subparsers.add_parser(
+        "serve", help="Serve a model with llama.cpp", parents=[common]
+    )
     serve_parser.add_argument("model", help="Model name to serve")
     serve_parser.add_argument(
         "--port", "-p", type=int, default=11853, help="Port to serve on"
@@ -1133,11 +1192,14 @@ def main() -> int:
 
     # doctor command
     doctor_parser = subparsers.add_parser(
-        "doctor", help="Validate the user config (families, setting keys)"
+        "doctor",
+        help="Validate the user config (families, setting keys)",
+        parents=[common],
     )
     doctor_parser.set_defaults(func=cmd_doctor)
 
     args = parser.parse_args()
+    set_settings_file(getattr(args, "config", None))
     return args.func(args)
 
 

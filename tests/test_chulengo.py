@@ -1298,6 +1298,79 @@ class TestDoctorCommand:
         assert settings == {"defaults": {}, "model_overrides": {}}
 
 
+class TestConfigOverride:
+    """Tests for --config / CHULENGO_CONFIG config path resolution."""
+
+    def test_resolve_default_when_unset(self, mocker):
+        """With no flag and no env var, the default path is used."""
+        # Empty string is falsy, so this exercises the "unset" branch while
+        # still being restored by mocker afterwards.
+        mocker.patch.dict(os.environ, {"CHULENGO_CONFIG": ""})
+        assert chulengo.resolve_settings_file() == chulengo.DEFAULT_SETTINGS_FILE_PATH
+
+    def test_env_var_wins_over_default(self, mocker, tmp_path):
+        """CHULENGO_CONFIG takes precedence over the default path."""
+        target = tmp_path / "env.yaml"
+        mocker.patch.dict(os.environ, {"CHULENGO_CONFIG": str(target)})
+        assert chulengo.resolve_settings_file() == target
+
+    def test_flag_wins_over_env_var(self, mocker, tmp_path):
+        """The --config value takes precedence over CHULENGO_CONFIG."""
+        env_target = tmp_path / "env.yaml"
+        cli_target = tmp_path / "cli.yaml"
+        mocker.patch.dict(os.environ, {"CHULENGO_CONFIG": str(env_target)})
+        assert chulengo.resolve_settings_file(str(cli_target)) == cli_target
+
+    def test_tilde_is_expanded(self, mocker):
+        """A leading ~ in either source is expanded to the home directory."""
+        mocker.patch.dict(os.environ, {"CHULENGO_CONFIG": ""})
+        resolved = chulengo.resolve_settings_file("~/some/models.yaml")
+        assert resolved == Path.home() / "some" / "models.yaml"
+
+    def test_set_settings_file_updates_global(self, mocker, tmp_path):
+        """set_settings_file points the module global at the resolved path."""
+        target = tmp_path / "models.yaml"
+        mocker.patch.object(chulengo, "SETTINGS_FILE", chulengo.SETTINGS_FILE)
+        assert chulengo.set_settings_file(str(target)) == target
+        assert chulengo.SETTINGS_FILE == target
+
+    def test_doctor_uses_config_flag_after_subcommand(self, mocker, tmp_path, capsys):
+        """`chulengo doctor --config <path>` validates the given file."""
+        target = tmp_path / "models.yaml"
+        target.write_text("defaults: [unclosed\n")
+        mocker.patch.object(chulengo, "SETTINGS_FILE", chulengo.SETTINGS_FILE)
+        mocker.patch.object(
+            sys, "argv", ["chulengo", "doctor", "--config", str(target)]
+        )
+
+        assert chulengo.main() == 1
+        assert "Could not parse config file" in capsys.readouterr().out
+        assert str(target) in str(chulengo.SETTINGS_FILE)
+
+    def test_doctor_uses_config_flag_before_subcommand(self, mocker, tmp_path, capsys):
+        """The global `chulengo --config <path> doctor` form also works."""
+        target = tmp_path / "models.yaml"
+        target.write_text("defaults:\n  qwen3:\n    ctx_size: 4096\n")
+        mocker.patch.object(chulengo, "SETTINGS_FILE", chulengo.SETTINGS_FILE)
+        mocker.patch.object(
+            sys, "argv", ["chulengo", "--config", str(target), "doctor"]
+        )
+
+        assert chulengo.main() == 0
+        assert "OK: config is valid" in capsys.readouterr().out
+
+    def test_doctor_uses_env_var(self, mocker, tmp_path, capsys):
+        """Without a flag, doctor validates the CHULENGO_CONFIG file."""
+        target = tmp_path / "models.yaml"
+        target.write_text("defaults: [unclosed\n")
+        mocker.patch.object(chulengo, "SETTINGS_FILE", chulengo.SETTINGS_FILE)
+        mocker.patch.dict(os.environ, {"CHULENGO_CONFIG": str(target)})
+        mocker.patch.object(sys, "argv", ["chulengo", "doctor"])
+
+        assert chulengo.main() == 1
+        assert "Could not parse config file" in capsys.readouterr().out
+
+
 class TestServeJinja:
     """Tests for how `serve --jinja` combines with jinja from the config."""
 
