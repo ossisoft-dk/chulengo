@@ -164,6 +164,29 @@ chulengo serve Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M \
   --reasoning off
 ```
 
+## Model Aliases
+
+Give a long repo name a short handle so you can serve it without typing the
+whole thing. Set an alias with `create` or `update`:
+
+```bash
+chulengo create LiquidAI/LFM2.5-230M-GGUF --alias lfm
+chulengo update LiquidAI/LFM2.5-230M-GGUF --alias lfm
+```
+
+Then serve by either name — both resolve to the same model and emit the stored
+alias as llama.cpp's `--alias` (a `--alias` on the command line wins over the
+stored one):
+
+```bash
+chulengo serve lfm
+chulengo serve LiquidAI/LFM2.5-230M-GGUF
+```
+
+`show`, `update`, and `delete` accept the alias the same way. Aliases must be
+unique and must not contain `/` (that would look like a repo name); `create`,
+`update`, and `doctor` all enforce this.
+
 ## Model Detection
 
 Chulengo uses two sources to determine the appropriate model settings:

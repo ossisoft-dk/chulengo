@@ -45,9 +45,8 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
    - `chulengo status` / `stop`: track the pid of a served model and stop it
      cleanly instead of relying on Ctrl+C in the original terminal
    - Print the exact command used (already done) and offer `--dry-run`
-   - Model aliases: a stored `alias` is saved by `create`/`update` but never used. `serve <alias>` passes the alias as `--hf-repo` (llama.cpp rejects it), and serving by repo name does not emit the stored alias as `--alias`.
-   - Resolve a non-`user/model` name to its `model_overrides` entry by `alias` (error on duplicates), and emit the stored alias as `--alias` (a CLI `--alias` still wins). `show`, `update` and `delete` have the same gap.
-   - Unique aliases: `create`/`update` refuse an alias that another model already uses or that contains `/` (it would look like a repo name and never resolve), and `chulengo doctor` flags both in a hand-edited config.
+   - [x] Model aliases: the stored `alias` is now emitted as `--alias` (a CLI `--alias` still wins), and `serve`/`show`/`update`/`delete <alias>` resolve to the stored repo name (duplicate aliases are an error)
+   - [x] Unique aliases: `create`/`update` refuse an alias already used by another model or containing `/`, and `chulengo doctor` flags both in a hand-edited config
 - **Multi-GPU support** (GPU selection is currently fully implicit —
    llama.cpp's defaults decide, which on multi-GPU boxes can place layers on
    a device you don't want, e.g. an iGPU)

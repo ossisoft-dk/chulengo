@@ -490,7 +490,89 @@ def doctor_config(settings: Any) -> list[str]:
                 cfg, f"Model override '{model}'", VALID_OVERRIDE_KEYS, issues
             )
 
+        # 5. Aliases must be slash-free and unique across models, otherwise
+        # `serve`/`show`/`update`/`delete` cannot resolve them unambiguously.
+        alias_owners: dict[str, list[str]] = {}
+        for model, cfg in overrides.items():
+            if not isinstance(cfg, dict):
+                continue
+            alias = cfg.get("alias")
+            if alias is None:
+                continue
+            if "/" in str(alias):
+                issues.append(
+                    f"Model override '{model}': alias '{alias}' must not "
+                    "contain '/' (it would look like a repo name)"
+                )
+            else:
+                alias_owners.setdefault(str(alias), []).append(model)
+        for alias, models in sorted(alias_owners.items()):
+            if len(models) > 1:
+                issues.append(
+                    f"Alias '{alias}' is used by multiple models: {', '.join(models)}"
+                )
+
     return issues
+
+
+def resolve_model_name(settings: dict, name: str) -> tuple[str, str | None]:
+    """Resolve a request name to the canonical repo name stored in config.
+
+    ``name`` may be a repo name (e.g. ``org/repo``) or a stored alias. It is
+    resolved against the ``model_overrides`` mapping:
+
+    * an exact repo-name key wins (also passes through names not in config),
+    * otherwise a name matching exactly one stored ``alias`` resolves to that
+      repo key,
+    * a name matching more than one alias is an error (duplicate alias).
+
+    Returns ``(resolved_name, None)`` on success, or ``(None, message)`` when
+    the name is an ambiguous alias.
+    """
+    overrides = settings.get("model_overrides", {}) or {}
+    if not isinstance(overrides, dict):
+        return name, None
+    # A direct repo-name match is authoritative (and covers unconfigured repos).
+    if name in overrides:
+        return name, None
+    matches = [
+        repo
+        for repo, cfg in overrides.items()
+        if isinstance(cfg, dict) and cfg.get("alias") == name
+    ]
+    if len(matches) == 1:
+        return matches[0], None
+    if len(matches) > 1:
+        return (
+            None,
+            f"Alias '{name}' matches multiple models: {', '.join(matches)}",
+        )
+    # Unknown name: pass through unchanged (serve/show can still handle it).
+    return name, None
+
+
+def _alias_conflict(settings: dict, model_name: str, alias: str | None) -> str | None:
+    """Return an error message if ``alias`` is invalid or taken by another model.
+
+    An alias must not contain ``/`` (it would look like a repo name and never
+    resolve) and must not already be used by a different model.
+    """
+    if alias is None:
+        return None
+    if "/" in alias:
+        return (
+            f"Alias '{alias}' must not contain '/' (it would look like a repo "
+            "name and never resolve)"
+        )
+    overrides = settings.get("model_overrides", {}) or {}
+    if not isinstance(overrides, dict):
+        return None
+    for repo, cfg in overrides.items():
+        if repo == model_name:
+            continue
+        if isinstance(cfg, dict) and cfg.get("alias") == alias:
+            return f"Alias '{alias}' is already used by model '{repo}'"
+    return None
 
 
 def get_model_cache_info(model_name: str) -> dict | None:
@@ -597,6 +679,13 @@ def cmd_show(args: argparse.Namespace) -> int:
 
     # Get settings first
     settings = load_settings()
+
+    # Allow `show <alias>` to resolve to the stored repo name.
+    model_name, error = resolve_model_name(settings, model_name)
+    if error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+
     model_overrides = settings.get("model_overrides", {})
 
     # Get cache info (optional - model might not be downloaded yet)
@@ -777,19 +866,25 @@ def build_llama_command(
     if port:
         cmd.extend(["--port", str(port)])
 
-    # Add alias if specified
-    if alias:
-        cmd.extend(["--alias", alias])
+    # Resolve user overrides once; the stored alias lives here. A CLI --alias
+    # wins over the alias saved by create/update.
+    user_settings = load_settings().get("model_overrides", {}).get(model_name, {}) or {}
+    effective_alias = alias if alias is not None else user_settings.get("alias")
+
+    # Add alias if specified (CLI flag or stored config alias)
+    if effective_alias:
+        cmd.extend(["--alias", str(effective_alias)])
 
     # Add model
     cmd.extend(["--hf-repo", model_name])
 
     # Get default settings
     defaults = get_default_settings(model_name)
-    user_settings = load_settings().get("model_overrides", {}).get(model_name, {})
 
-    # Merge settings (user overrides take precedence)
+    # Merge settings (user overrides take precedence). `alias` is emitted as a
+    # flag above, not a setting, so drop it from the merged dict.
     all_settings = {**defaults, **user_settings}
+    all_settings.pop("alias", None)
 
     # Apply command-line overrides
     if ctx_size is not None:
@@ -850,6 +945,12 @@ def cmd_create(args: argparse.Namespace) -> int:
     if "model_overrides" not in settings:
         settings["model_overrides"] = {}
 
+    # Reject an alias that would be ambiguous or look like a repo name.
+    conflict = _alias_conflict(settings, model_name, args.alias)
+    if conflict:
+        print(f"Error: {conflict}", file=sys.stderr)
+        return 1
+
     # Build settings dict from args
     new_settings: dict[str, Any] = {}
 
@@ -897,11 +998,22 @@ def cmd_create(args: argparse.Namespace) -> int:
 
 def cmd_update(args: argparse.Namespace) -> int:
     """Update settings for a model."""
-    model_name = args.model
     settings = load_settings()
+
+    # Allow `update <alias>` to target the stored repo name.
+    model_name, error = resolve_model_name(settings, args.model)
+    if error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
 
     if "model_overrides" not in settings:
         settings["model_overrides"] = {}
+
+    # Reject an alias that would be ambiguous or look like a repo name.
+    conflict = _alias_conflict(settings, model_name, args.alias)
+    if conflict:
+        print(f"Error: {conflict}", file=sys.stderr)
+        return 1
 
     # Build settings dict from args
     updates: dict[str, Any] = {}
@@ -956,8 +1068,13 @@ def cmd_update(args: argparse.Namespace) -> int:
 
 def cmd_delete(args: argparse.Namespace) -> int:
     """Delete a model override."""
-    target = args.target
     settings = load_settings()
+
+    # Allow `delete <alias>` to target the stored repo name.
+    target, error = resolve_model_name(settings, args.target)
+    if error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
 
     model_overrides = settings.get("model_overrides", {})
     if target not in model_overrides:
@@ -973,7 +1090,12 @@ def cmd_delete(args: argparse.Namespace) -> int:
 
 def cmd_serve(args: argparse.Namespace) -> int:
     """Serve a model with llama.cpp."""
-    model_name = args.model
+    # Allow `serve <alias>` to resolve to the stored repo name.
+    resolved, error = resolve_model_name(load_settings(), args.model)
+    if error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+    model_name = resolved
 
     # Build command
     cmd = build_llama_command(

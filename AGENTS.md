@@ -74,6 +74,14 @@ refactor, suspect mock coupling (the patch no longer hits the right code path)
 before assuming your logic is wrong. Prefer local, targeted mocks when adding
 tests.
 
+**Never let a test write the real user config.** A test that drives
+`cmd_create`/`cmd_update` (or first-run `load_settings`) and forgets to mock
+`save_settings` will call the real one and clobber
+`~/.config/chulengo/models.yaml`. `tests/conftest.py` has an autouse fixture
+(`isolate_chulengo_config`) that redirects `SETTINGS_FILE` and
+`CHULENGO_CONFIG` to a temp path, so this cannot happen — but still mock
+`save_settings` in tests that hit it, and only write to a `tmp_path`.
+
 ## Layout
 
 - `chulengo.py` — the entire CLI (argparse, config load/save, GGUF metadata

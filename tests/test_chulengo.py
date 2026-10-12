@@ -1,5 +1,6 @@
 """Tests for Chulengo - A llama.cpp wrapper for HuggingFace models."""
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -503,6 +504,8 @@ class TestCmdCreate:
         mock_args.cache_type_v = None
         mock_args.chat_template_file = None
 
+        mock_load = mocker.patch("chulengo.load_settings")
+        mock_load.return_value = {"defaults": {}, "model_overrides": {}}
         mock_save = mocker.patch("chulengo.save_settings")
 
         result = chulengo.cmd_create(mock_args)
@@ -531,10 +534,12 @@ class TestCmdCreate:
                 "existing/model": {"ctx_size": 8192, "flash_attn": "on"}
             },
         }
+        mock_save = mocker.patch("chulengo.save_settings")
 
         result = chulengo.cmd_create(mock_args)
 
         assert result == 0
+        mock_save.assert_called_once()
 
 
 class TestCmdDelete:
@@ -1370,6 +1375,211 @@ class TestConfigOverride:
 
         assert chulengo.main() == 1
         assert "Could not parse config file" in capsys.readouterr().out
+
+
+class TestAliases:
+    """Tests for model alias resolution, emission, and validation."""
+
+    @staticmethod
+    def _ns(**kwargs):
+        base = dict(
+            model=None,
+            port=None,
+            alias=None,
+            ctx_size=None,
+            flash_attn=None,
+            reasoning=None,
+            jinja=None,
+            spec_type=None,
+            cache_type_k=None,
+            cache_type_v=None,
+            chat_template_file=None,
+            target=None,
+        )
+        base.update(kwargs)
+        return argparse.Namespace(**base)
+
+    # --- resolve_model_name ---------------------------------------------
+
+    def test_resolve_repo_key_passthrough(self):
+        settings = {"model_overrides": {"org/repo": {"alias": "lfm"}}}
+        assert chulengo.resolve_model_name(settings, "org/repo") == (
+            "org/repo",
+            None,
+        )
+
+    def test_resolve_unique_alias(self):
+        settings = {"model_overrides": {"org/repo": {"alias": "lfm"}}}
+        assert chulengo.resolve_model_name(settings, "lfm") == ("org/repo", None)
+
+    def test_resolve_unknown_name_passes_through(self):
+        settings = {"model_overrides": {"org/a": {"alias": "x"}}}
+        assert chulengo.resolve_model_name(settings, "other/model") == (
+            "other/model",
+            None,
+        )
+
+    def test_resolve_ambiguous_alias_is_error(self):
+        settings = {
+            "model_overrides": {"org/a": {"alias": "x"}, "org/b": {"alias": "x"}}
+        }
+        resolved, error = chulengo.resolve_model_name(settings, "x")
+        assert resolved is None
+        assert "matches multiple models" in error
+        assert "org/a" in error and "org/b" in error
+
+    def test_resolve_key_wins_over_alias_match(self):
+        # "lfm" is a repo key and also another model's alias; the key wins.
+        settings = {"model_overrides": {"lfm": {}, "org/a": {"alias": "lfm"}}}
+        assert chulengo.resolve_model_name(settings, "lfm") == ("lfm", None)
+
+    # --- _alias_conflict -------------------------------------------------
+
+    def test_alias_conflict_taken_by_other_model(self):
+        settings = {"model_overrides": {"org/a": {"alias": "lfm"}}}
+        error = chulengo._alias_conflict(settings, "org/b", "lfm")
+        assert error and "already used by model 'org/a'" in error
+
+    def test_alias_conflict_allows_same_model(self):
+        settings = {"model_overrides": {"org/a": {"alias": "lfm"}}}
+        assert chulengo._alias_conflict(settings, "org/a", "lfm") is None
+
+    def test_alias_conflict_rejects_slash(self):
+        settings = {"model_overrides": {}}
+        error = chulengo._alias_conflict(settings, "org/a", "org/bad")
+        assert error and "/" in error
+
+    # --- build_llama_command ---------------------------------------------
+
+    def test_emits_stored_alias_from_config(self, mocker):
+        settings = {"defaults": {}, "model_overrides": {"org/repo": {"alias": "lfm"}}}
+        with patch("chulengo.load_settings", return_value=settings):
+            with patch("chulengo.get_default_settings", return_value={}):
+                result = chulengo.build_llama_command("org/repo")
+        assert result[result.index("--alias") + 1] == "lfm"
+
+    def test_cli_alias_wins_over_stored(self, mocker):
+        settings = {"defaults": {}, "model_overrides": {"org/repo": {"alias": "lfm"}}}
+        with patch("chulengo.load_settings", return_value=settings):
+            with patch("chulengo.get_default_settings", return_value={}):
+                result = chulengo.build_llama_command("org/repo", alias="cli")
+        assert result.count("--alias") == 1
+        assert result[result.index("--alias") + 1] == "cli"
+
+    def test_no_alias_flag_without_cli_or_config(self, mocker):
+        settings = {"defaults": {}, "model_overrides": {"org/repo": {}}}
+        with patch("chulengo.load_settings", return_value=settings):
+            with patch("chulengo.get_default_settings", return_value={}):
+                result = chulengo.build_llama_command("org/repo")
+        assert "--alias" not in result
+
+    # --- cmd_create ------------------------------------------------------
+
+    def test_create_refuses_duplicate_alias(self, mocker, capsys):
+        settings = {"defaults": {}, "model_overrides": {"org/a": {"alias": "lfm"}}}
+        mocker.patch.object(chulengo, "load_settings", return_value=settings)
+        save = mocker.patch.object(chulengo, "save_settings")
+        ns = self._ns(model="org/b", alias="lfm")
+
+        assert chulengo.cmd_create(ns) == 1
+        save.assert_not_called()
+        assert "already used by model 'org/a'" in capsys.readouterr().err
+
+    def test_create_refuses_slash_alias(self, mocker, capsys):
+        settings = {"defaults": {}, "model_overrides": {}}
+        mocker.patch.object(chulengo, "load_settings", return_value=settings)
+        save = mocker.patch.object(chulengo, "save_settings")
+        ns = self._ns(model="org/b", alias="org/x")
+
+        assert chulengo.cmd_create(ns) == 1
+        save.assert_not_called()
+        assert "must not contain '/'" in capsys.readouterr().err
+
+    # --- cmd_update ------------------------------------------------------
+
+    def test_update_resolves_alias_to_repo(self, mocker):
+        settings = {"defaults": {}, "model_overrides": {"org/repo": {"alias": "lfm"}}}
+        mocker.patch.object(chulengo, "load_settings", return_value=settings)
+        save = mocker.patch.object(chulengo, "save_settings")
+        ns = self._ns(model="lfm", ctx_size=32000)
+
+        assert chulengo.cmd_update(ns) == 0
+        saved = save.call_args.args[0]
+        assert saved["model_overrides"]["org/repo"]["ctx_size"] == 32000
+        assert "lfm" not in saved["model_overrides"]
+
+    def test_update_refuses_duplicate_alias(self, mocker, capsys):
+        settings = {
+            "defaults": {},
+            "model_overrides": {"org/a": {"alias": "x"}, "org/b": {}},
+        }
+        mocker.patch.object(chulengo, "load_settings", return_value=settings)
+        save = mocker.patch.object(chulengo, "save_settings")
+        ns = self._ns(model="org/b", alias="x")
+
+        assert chulengo.cmd_update(ns) == 1
+        save.assert_not_called()
+        assert "already used by model 'org/a'" in capsys.readouterr().err
+
+    # --- cmd_delete ------------------------------------------------------
+
+    def test_delete_by_alias(self, mocker):
+        settings = {"defaults": {}, "model_overrides": {"org/repo": {"alias": "lfm"}}}
+        mocker.patch.object(chulengo, "load_settings", return_value=settings)
+        mocker.patch.object(chulengo, "save_settings")
+        ns = self._ns(target="lfm")
+
+        assert chulengo.cmd_delete(ns) == 0
+        assert "org/repo" not in settings["model_overrides"]
+
+    # --- cmd_serve -------------------------------------------------------
+
+    def test_serve_by_alias_resolves_repo_and_emits_alias(self, mocker):
+        settings = {"defaults": {}, "model_overrides": {"org/repo": {"alias": "lfm"}}}
+        mocker.patch.object(chulengo, "load_settings", return_value=settings)
+        mocker.patch.object(chulengo, "get_default_settings", return_value={})
+        popen = mocker.patch("chulengo.subprocess.Popen")
+        popen.return_value.wait.return_value = 0
+        ns = self._ns(model="lfm")
+
+        assert chulengo.cmd_serve(ns) == 0
+        cmd = popen.call_args.args[0]
+        assert cmd[cmd.index("--hf-repo") + 1] == "org/repo"
+        assert cmd[cmd.index("--alias") + 1] == "lfm"
+
+    def test_serve_ambiguous_alias_errors(self, mocker, capsys):
+        settings = {
+            "model_overrides": {"org/a": {"alias": "x"}, "org/b": {"alias": "x"}}
+        }
+        mocker.patch.object(chulengo, "load_settings", return_value=settings)
+        popen = mocker.patch("chulengo.subprocess.Popen")
+        ns = self._ns(model="x")
+
+        assert chulengo.cmd_serve(ns) == 1
+        popen.assert_not_called()
+        assert "matches multiple models" in capsys.readouterr().err
+
+    # --- doctor ----------------------------------------------------------
+
+    def test_doctor_flags_slash_alias(self):
+        settings = {"defaults": {}, "model_overrides": {"org/a": {"alias": "org/x"}}}
+        issues = chulengo.doctor_config(settings)
+        assert any("must not contain '/'" in i for i in issues)
+
+    def test_doctor_flags_duplicate_alias(self):
+        settings = {
+            "defaults": {},
+            "model_overrides": {"org/a": {"alias": "x"}, "org/b": {"alias": "x"}},
+        }
+        issues = chulengo.doctor_config(settings)
+        assert any("used by multiple models" in i for i in issues)
+
+    def test_doctor_allows_unique_aliases(self):
+        settings = {
+            "defaults": {},
+            "model_overrides": {"org/a": {"alias": "x"}, "org/b": {"alias": "y"}},
+        }
+        assert chulengo.doctor_config(settings) == []
 
 
 class TestServeJinja:

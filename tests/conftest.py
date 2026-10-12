@@ -1,7 +1,30 @@
 """Shared fixtures for Chulengo tests."""
 
-import pytest
+import sys
 from pathlib import Path
+
+import pytest
+
+# Add parent directory to path so `import chulengo` works during collection.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import chulengo
+
+
+@pytest.fixture(autouse=True)
+def isolate_chulengo_config(tmp_path_factory, monkeypatch):
+    """Redirect the config path so tests never write to the real user config.
+
+    Several commands (``create``/``update``/first-run seeding in
+    ``load_settings``) write through ``save_settings``. If a test forgets to
+    mock ``save_settings``, an unredirected run would clobber
+    ``~/.config/chulengo/models.yaml``. Point both the module global and the
+    ``CHULENGO_CONFIG`` env var at a throwaway path for every test.
+    """
+    target = tmp_path_factory.mktemp("chulengo-config") / "models.yaml"
+    monkeypatch.setattr(chulengo, "SETTINGS_FILE", target)
+    monkeypatch.setenv("CHULENGO_CONFIG", str(target))
+    return target
 
 
 @pytest.fixture
