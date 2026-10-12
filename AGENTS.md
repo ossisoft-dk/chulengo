@@ -54,6 +54,7 @@ Also keep `create` and `update` in sync — they build their settings dicts
 from the same flag set and should stay identical in shape.
 
 - For Python files the tools are the authority: write, then uv run ruff format and uv run ruff check (this is what catches hand-typed whitespace drift). For Markdown keep bullets single-line so no continuation indentation is needed.
+
 ## Verification loop
 
 After any change, run:
@@ -92,7 +93,8 @@ tests.
 - `tests/` — pytest suite.
 - `README.md` — user-facing overview.
 - `ROADMAP.md` — direction and open items; check it before starting new
-  features.
+  features. When an item is done, remove it from `ROADMAP.md`; git history is
+  the record of what shipped.
 
 ## Boundaries
 
