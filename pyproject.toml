@@ -39,19 +39,15 @@ dev = [
     "pytest>=7.0.0",
     "pytest-mock>=3.10.0",
     "pyyaml>=6.0",
-    "black>=24.0.0",
     "ruff>=0.5.0",
 ]
 
 # --- Formatting & linting (agentic-edit friendly baseline) ---
-# black is the source of truth for style: 4-space indent, 88-col lines.
-# Keep the repo black-clean; do not hand-format. See AGENTS.md.
-[tool.black]
-line-length = 88
-target-version = ["py310"]
+# `ruff format` is the source of truth for style: 4-space indent, 88-col lines.
+# Keep the repo format-clean; do not hand-format. See AGENTS.md.
 
-# ruff: lint only (formatting is black's job). Keep the default ruleset light
-# so it flags real problems, not style, and never conflicts with black.
+# ruff: format + a light lint ruleset. Keep the rules light so it flags real
+# problems, not style. E501 is ignored because `ruff format` owns line length.
 [tool.ruff]
 line-length = 88
 target-version = "py310"
@@ -63,5 +59,5 @@ select = [
     "W",   # pycodestyle warnings
 ]
 ignore = [
-    "E501",  # line-too-long: black owns line length
+    "E501",  # line-too-long: ruff format owns line length
 ]

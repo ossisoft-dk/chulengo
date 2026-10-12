@@ -477,7 +477,8 @@ class TestBuildLlamaCommand:
                 "chulengo.get_default_settings", return_value={"ctx_size": 4096}
             ):
                 result = chulengo.build_llama_command(
-                    "test/model", ctx_size=16384  # Override
+                    "test/model",
+                    ctx_size=16384,  # Override
                 )
 
         assert "--ctx-size" in result
@@ -1099,9 +1100,9 @@ class TestModelFamilyCoverage:
 
         for model_name, expected_family in test_models:
             result = chulengo.detect_model_family(model_name)
-            assert (
-                result == expected_family
-            ), f"Failed for {model_name}: got {result}, expected {expected_family}"
+            assert result == expected_family, (
+                f"Failed for {model_name}: got {result}, expected {expected_family}"
+            )
 
     def test_detects_qwen_coder_models(self):
         """Test that Codestral models are detected correctly."""
