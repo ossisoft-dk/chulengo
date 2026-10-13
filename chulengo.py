@@ -17,6 +17,7 @@ from typing import Any, NamedTuple
 
 import ruamel.yaml
 from gguf import GGUFReader
+from gguf.constants import MODEL_ARCH_NAMES
 from gguf.utility import model_weight_count_rounded_notation
 
 # Default settings file path. The active path can be overridden per invocation
@@ -66,7 +67,15 @@ KNOWN_FAMILIES = [
 ]
 
 # "generic" is the always-valid fallback family, so it counts as known.
-VALID_FAMILIES = frozenset({"generic", *KNOWN_FAMILIES})
+
+# Architectures llama.cpp knows about (GGUF general.architecture values).
+# A `defaults:` block named after any of them is valid, so settings for a
+# new architecture can be configured without waiting for a chulengo release.
+BUILTIN_ARCHES = frozenset(MODEL_ARCH_NAMES.values())
+
+# Valid keys under `defaults:`: known families, any llama.cpp architecture,
+# and the always-valid generic fallback.
+VALID_DEFAULT_KEYS = frozenset({"generic", *KNOWN_FAMILIES}) | BUILTIN_ARCHES
 
 # Valid top-level keys in the config file.
 VALID_TOP_LEVEL_KEYS = frozenset({"defaults", "model_overrides"})
@@ -355,6 +364,19 @@ def detect_model_family(
     return None
 
 
+def _user_arch_families(defaults: dict) -> list[str]:
+    """User-configured extra families, in file order.
+
+    These are `defaults:` keys that name a llama.cpp architecture
+    (BUILTIN_ARCHES) chulengo does not know natively (KNOWN_FAMILIES) —
+    e.g. a user-added `plamo:` block. Prepending them to the built-in
+    family list lets user blocks win name detection over shipped ones.
+    """
+    return [
+        key for key in defaults if key in BUILTIN_ARCHES and key not in KNOWN_FAMILIES
+    ]
+
+
 class FamilyResolution(NamedTuple):
     """Result of resolving a model to its family default settings.
 
@@ -375,7 +397,10 @@ def resolve_model_family(model_name: str) -> FamilyResolution:
     1. ``general.architecture`` from the cached GGUF, if a block named
        after it exists under ``defaults`` (either the raw architecture or
        its underscore form, so "gpt-oss" matches the shipped "gpt_oss").
-    2. name-based family detection (for models without a usable GGUF).
+    2. name-based family detection, first against user-configured
+       architecture blocks (any `defaults:` key naming a llama.cpp
+       architecture chulengo does not know natively), then the built-in
+       family list (for models without a usable GGUF).
     3. the ``generic`` fallback block.
 
     A cached GGUF that fails to pin down the family (unreadable
@@ -408,8 +433,12 @@ def resolve_model_family(model_name: str) -> FamilyResolution:
         else:
             unreadable_note = "could not read the architecture from the cached GGUF"
 
-    # Priority 2: Detect family from model name (for models without GGUF in cache)
-    family = detect_model_family(model_name)
+    # Priority 2: Detect family from model name (for models without GGUF in
+    # cache). User-configured architecture blocks are consulted first so
+    # they can sharpen detection without a chulengo release.
+    family = detect_model_family(
+        model_name, families=[*_user_arch_families(defaults), *KNOWN_FAMILIES]
+    )
 
     if family and family in defaults:
         family_settings = defaults[family].copy()
@@ -469,7 +498,8 @@ def doctor_config(settings: Any) -> list[str]:
     Checks the whole user config:
         1. Only known top-level keys are present (`defaults`,
            `model_overrides`).
-        2. Every family key under `defaults` is a known family (flags typos).
+        2. Every key under `defaults` is a known family or a llama.cpp
+           architecture (flags typos).
         3. Every setting key inside a family block is a recognised setting.
         4. Every setting key inside a `model_overrides` entry is recognised
            (`alias` is allowed there, but not in family defaults).
@@ -489,7 +519,9 @@ def doctor_config(settings: Any) -> list[str]:
             known = ", ".join(sorted(VALID_TOP_LEVEL_KEYS))
             issues.append(f"Unknown top-level key '{key}'. Known keys: {known}")
 
-    # 2-3. Family keys must be known (catches e.g. "qwen3 " or "gemmma").
+    # 2-3. Keys under `defaults` must be known (catches e.g. "qwen3 " or
+    # "gemmma"); beyond the built-in families, any llama.cpp architecture
+    # is a valid key.
     defaults = settings.get("defaults", {}) or {}
     if not isinstance(defaults, dict):
         issues.append(f"'defaults' must be a mapping, got {type(defaults).__name__}")
@@ -498,11 +530,12 @@ def doctor_config(settings: Any) -> list[str]:
             if family == "generic":
                 # Always-valid fallback family; not a typo even if unused.
                 continue
-            if family not in VALID_FAMILIES:
-                known = ", ".join(sorted(VALID_FAMILIES))
+            if family not in VALID_DEFAULT_KEYS:
+                known = ", ".join(sorted(KNOWN_FAMILIES))
                 issues.append(
-                    f"Unknown family '{family}' — likely a typo. "
-                    f"Known families: {known}"
+                    f"Unknown family '{family}' — likely a typo. Known "
+                    f"families: {known}; any llama.cpp architecture name "
+                    "(e.g. plamo, llama4) is also valid"
                 )
         for family, cfg in defaults.items():
             _validate_setting_block(
@@ -841,12 +874,15 @@ def cmd_show(args: argparse.Namespace) -> int:
     for warning in resolve_model_family(model_name).warnings:
         print(f"Warning: {warning}", file=sys.stderr)
 
-    # Detect family and show settings
-    family = detect_model_family(model_name)
+    # Detect family and show settings. User-configured architecture blocks
+    # take precedence here too, so show and serve agree on the family.
+    defaults = settings.get("defaults", {})
+    family = detect_model_family(
+        model_name, families=[*_user_arch_families(defaults), *KNOWN_FAMILIES]
+    )
     if family:
         print(f"\nDetected family: {family}")
         print()
-        defaults = settings.get("defaults", {})
         if family in defaults:
             print(f"Default settings for {family}:")
             for k, v in defaults[family].items():

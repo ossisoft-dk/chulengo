@@ -364,8 +364,8 @@ class TestResolveModelFamily:
         "model_overrides": {},
     }
 
-    def _resolve(self, model_name, mocker, *, arch=None, cached=True):
-        mocker.patch("chulengo.load_settings", return_value=self.SETTINGS)
+    def _resolve(self, model_name, mocker, *, arch=None, cached=True, settings=None):
+        mocker.patch("chulengo.load_settings", return_value=settings or self.SETTINGS)
         mocker.patch(
             "chulengo.get_model_cache_info",
             return_value=(
@@ -447,6 +447,60 @@ class TestResolveModelFamily:
 
         assert resolution.warnings == []
         assert resolution.settings["ctx_size"] == 16384
+
+    def test_user_arch_block_used_for_cached_arch(self, mocker):
+        """A user `plamo:` block serves a cached plamo-architecture model
+        with no warning."""
+        settings = {
+            "defaults": {
+                "plamo": {"ctx_size": 8192},
+                "generic": {"ctx_size": 4096},
+            },
+            "model_overrides": {},
+        }
+
+        resolution = self._resolve(
+            "plamo/PLaMo-2-8B", mocker, arch="plamo", settings=settings
+        )
+
+        assert resolution.warnings == []
+        assert resolution.settings["ctx_size"] == 8192
+
+    def test_user_arch_block_found_by_name(self, mocker):
+        """An uncached model is matched by name against user arch blocks."""
+        settings = {
+            "defaults": {
+                "plamo": {"ctx_size": 8192},
+                "generic": {"ctx_size": 4096},
+            },
+            "model_overrides": {},
+        }
+
+        resolution = self._resolve(
+            "plamo/PLaMo-2-8B", mocker, cached=False, settings=settings
+        )
+
+        assert resolution.warnings == []
+        assert resolution.settings["ctx_size"] == 8192
+
+    def test_user_arch_block_beats_builtin_family(self, mocker):
+        """A user `llama4:` block wins name detection over the shipped
+        `llama` family."""
+        settings = {
+            "defaults": {
+                "llama": {"ctx_size": 4096},
+                "llama4": {"ctx_size": 65536},
+                "generic": {"ctx_size": 2048},
+            },
+            "model_overrides": {},
+        }
+
+        resolution = self._resolve(
+            "meta-llama/Llama-4-Scout", mocker, cached=False, settings=settings
+        )
+
+        # Without the user block, name detection would land on `llama`.
+        assert resolution.settings["ctx_size"] == 65536
 
 
 class TestBuildLlamaCommand:
@@ -789,6 +843,38 @@ class TestCmdShow:
         captured = capsys.readouterr()
         assert "architecture 'plamo' has no settings" in captured.err
         assert "Detected family: qwen3" in captured.out
+
+    def test_show_detects_user_arch_family(self, mocker, capsys):
+        """User-configured architecture blocks feed 'Detected family'."""
+        mock_args = MagicMock()
+        mock_args.model = "plamo/PLaMo-2-8B"
+
+        cache_info = {
+            "cache_dir": "/cache/plamo/PLaMo-2-8B",
+            "snapshot": "/cache/plamo/PLaMo-2-8B/snapshots/123",
+            "gguf_files": ["plamo-2-8b.gguf"],
+            "gguf_path": "/cache/plamo/PLaMo-2-8B/plamo-2-8b.gguf",
+        }
+
+        settings = {
+            "defaults": {
+                "plamo": {"ctx_size": 8192},
+                "generic": {"ctx_size": 4096},
+            },
+            "model_overrides": {},
+        }
+
+        with patch("chulengo.load_settings", return_value=settings):
+            with patch("chulengo.get_model_cache_info", return_value=cache_info):
+                with patch("chulengo.get_gguf_architecture", return_value="plamo"):
+                    with patch("chulengo.extract_gguf_metadata", return_value=None):
+                        result = chulengo.cmd_show(mock_args)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Detected family: plamo" in captured.out
+        assert "Default settings for plamo" in captured.out
+        assert captured.err == ""
 
 
 class TestGetModelCacheInfo:
@@ -1281,6 +1367,22 @@ class TestDoctorConfig:
         issues = chulengo.doctor_config(settings)
         assert len(issues) == 1
         assert "Unknown family 'gemmma'" in issues[0]
+
+    def test_architecture_named_blocks_are_valid(self):
+        """Blocks named after llama.cpp architectures (e.g. plamo, gpt-oss)
+        are valid `defaults:` keys, not typos."""
+        settings = {
+            "defaults": {
+                "plamo": {"ctx_size": 8192},
+                "gpt-oss": {"ctx_size": 131072},
+                "gemmma": {"ctx_size": 4096},
+            },
+            "model_overrides": {},
+        }
+        issues = chulengo.doctor_config(settings)
+
+        assert not any("'plamo'" in i or "'gpt-oss'" in i for i in issues)
+        assert any("Unknown family 'gemmma'" in i for i in issues)
 
     def test_unknown_setting_key_is_flagged(self, mocker):
         """A setting key that isn't recognised should be reported."""

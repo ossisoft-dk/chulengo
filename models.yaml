@@ -1,6 +1,9 @@
 # Default settings for common model families
 # Model families are identified by GGUF general.architecture field when available
 # Name-based detection is used as fallback when GGUF metadata is not accessible
+# A block may instead be named after any llama.cpp architecture (e.g. plamo,
+# llama4) that chulengo does not know natively; such blocks are valid config and
+# are matched by both architecture and model name
 
 defaults:
   generic:
