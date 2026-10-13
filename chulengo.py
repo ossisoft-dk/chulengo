@@ -8,11 +8,12 @@ by applying sensible defaults based on model family.
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import ruamel.yaml
 from gguf import GGUFReader
@@ -318,46 +319,20 @@ def extract_gguf_metadata(gguf_path: Path) -> dict | None:
     return result
 
 
-def detect_model_family(model_name: str) -> str | None:
-    """Detect the model family from the model name."""
+def detect_model_family(
+    model_name: str, families: list[str] | None = None
+) -> str | None:
+    """Detect the model family from the model name.
+
+    ``families`` overrides the candidate list; order matters, so put more
+    specific names first. ``None`` means the built-in KNOWN_FAMILIES.
+    """
+    if families is None:
+        families = KNOWN_FAMILIES
+
     model_lower = model_name.lower()
 
     # Order matters - check more specific family names first
-    families = [
-        "qwen35moe",
-        "qwen35",
-        "gpt_oss",
-        "qwancoder",
-        "qwopus",  # Explicit check for qwopus before qwen
-        "codestral",
-        "llama3_2",
-        "llama3_1",
-        "llama3",
-        "llama",
-        "qwen3",
-        "qwen",
-        "laguna",
-        "mixtral",
-        "mistral",
-        "mistral3",
-        "mistral4",  # new Mixtral uses mistral4 architecture
-        "glm4moe",
-        "glm4",
-        "gemma3",
-        "gemma2",
-        "gemma",
-        "granitemoe",
-        "granite",
-        "granitemoeshared",
-        "phi",
-        "deepseek2",
-        "deepseek",
-        "nemotron_h",
-        "nemotron",
-        "lfm2",
-        "qwencoder",
-    ]
-
     for family in families:
         # Normalize both by removing underscores and hyphens
         family_norm = family.replace("_", "").replace("-", "")
@@ -367,9 +342,6 @@ def detect_model_family(model_name: str) -> str | None:
         if family in ("llama3", "llama3_1", "llama3_2"):
             base = "llama3"
             if base in model_norm and base != family:
-                # Check if this is actually a llama3 variant
-                import re
-
                 # Check for llama followed by 3 (with potential dot)
                 if not re.search(r"llama[\._-]?3", model_lower):
                     continue
@@ -383,11 +355,30 @@ def detect_model_family(model_name: str) -> str | None:
     return None
 
 
-def get_default_settings(model_name: str) -> dict:
-    """Get default settings for a model based on its family.
+class FamilyResolution(NamedTuple):
+    """Result of resolving a model to its family default settings.
 
-    Uses GGUF architecture from file metadata as primary source (no fallback).
-    Falls back to name-based detection only when GGUF file is not accessible.
+    ``warnings`` carries human-readable notes about a degraded resolution
+    (e.g. a cached GGUF whose architecture is unreadable); callers decide
+    whether and where to print them.
+    """
+
+    settings: dict
+    warnings: list[str]
+
+
+def resolve_model_family(model_name: str) -> FamilyResolution:
+    """Resolve a model to its family default settings, collecting warnings.
+
+    Resolution order, first match wins:
+
+    1. ``general.architecture`` from the cached GGUF, if a block named after
+       it exists under ``defaults``.
+    2. name-based family detection (for models without a usable GGUF).
+    3. the ``generic`` fallback block.
+
+    Never prints; warnings are returned so callers can route them (e.g. to
+    stderr) as they see fit.
     """
     settings = load_settings()
     defaults = settings.get("defaults", {})
@@ -397,7 +388,7 @@ def get_default_settings(model_name: str) -> dict:
     if cache_info and cache_info.get("gguf_path"):
         gguf_architecture = get_gguf_architecture(Path(cache_info["gguf_path"]))
         if gguf_architecture and gguf_architecture in defaults:
-            return defaults[gguf_architecture].copy()
+            return FamilyResolution(defaults[gguf_architecture].copy(), [])
 
     # Priority 2: Detect family from model name (for models without GGUF in cache)
     family = detect_model_family(model_name)
@@ -405,10 +396,23 @@ def get_default_settings(model_name: str) -> dict:
     if family and family in defaults:
         family_settings = defaults[family].copy()
         # Remove None values (for optional args)
-        return {k: v for k, v in family_settings.items() if v is not None}
+        return FamilyResolution(
+            {k: v for k, v in family_settings.items() if v is not None}, []
+        )
 
     # Fall back to generic defaults
-    return defaults.get("generic", {})
+    return FamilyResolution(defaults.get("generic", {}), [])
+
+
+def get_default_settings(model_name: str) -> dict:
+    """Get default settings for a model based on its family.
+
+    Uses GGUF architecture from file metadata as primary source (no fallback).
+    Falls back to name-based detection only when GGUF file is not accessible.
+    Thin wrapper over resolve_model_family() for callers that do not care
+    about resolution warnings.
+    """
+    return resolve_model_family(model_name).settings
 
 
 def _validate_setting_block(
