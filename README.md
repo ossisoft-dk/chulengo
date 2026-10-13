@@ -130,7 +130,10 @@ chulengo delete my-model-name
 
 Validate your settings file (`~/.config/chulengo/models.yaml`) without editing
 it by hand. `doctor` flags unknown model families, unknown setting keys in
-defaults and model overrides, unknown top-level keys, and malformed blocks:
+defaults and model overrides, unknown top-level keys, and malformed blocks.
+Family keys include any llama.cpp architecture name (see
+[Model Detection](#model-detection)), so a `plamo:` or `llama4:` block is
+valid config, not a typo:
 
 ```bash
 chulengo doctor
@@ -193,11 +196,27 @@ Chulengo uses two sources to determine the appropriate model settings:
 
 ### Primary: GGUF Architecture
 
-When a model's GGUF file is available in the HuggingFace cache, Chulengo reads the `general.architecture` field directly from the GGUF metadata. This is the authoritative source used by llama.cpp.
+When a model's GGUF file is available in the HuggingFace cache, Chulengo reads the `general.architecture` field directly from the GGUF metadata. This is the authoritative source used by llama.cpp. The matching `defaults:` block may be named after the raw architecture or its underscore form — a `gpt-oss` GGUF picks up the shipped `gpt_oss` block.
+
+A cached GGUF that fails to pin down a family is reported instead of silently guessed: when the architecture cannot be read, or when it has no `defaults:` block, `serve` and `show` print a warning to stderr and fall back to name-based detection (and, failing that, the `generic` block). The warning names the fallback actually used, e.g. `Warning: could not read the architecture from the cached GGUF; using qwen3 defaults from the model name`, or suggests the missing block: `architecture 'plamo' has no settings; add a 'plamo:' block under defaults: in ~/.config/chulengo/models.yaml`.
 
 ### Fallback: Name-based Detection
 
-When the GGUF file is not accessible (e.g., model not downloaded), Chulengo falls back to pattern matching on the model name.
+When the GGUF file is not accessible (e.g., model not downloaded), Chulengo falls back to pattern matching on the model name. Architecture blocks you have added yourself (see below) are matched first, ahead of the built-in family list.
+
+### Adding a New Architecture
+
+Settings for an architecture Chulengo does not know natively can be added without a release: put one block under `defaults:` in `~/.config/chulengo/models.yaml`, named after the GGUF `general.architecture` value. Any llama.cpp architecture name is valid, e.g. `plamo` or `llama4`:
+
+```yaml
+defaults:
+  plamo:
+    ctx_size: 8192
+    flash_attn: on
+    jinja: on
+```
+
+Such a block is used when a cached GGUF reports that architecture, and — because user-added blocks are matched before the built-in families — also when the model name suggests it, even for models that are not downloaded yet. `chulengo doctor` accepts these blocks and still flags real typos.
 
 ## Supported Model Types
 

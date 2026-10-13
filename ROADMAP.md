@@ -6,11 +6,22 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
 
 ## Next (near-term)
 
-- **Family detection**
-  - Reduce fallback reliance on name matching: warn (not just silently guess)
-    when a cached GGUF exists but its architecture is unknown
-  - Configurable family list so new architectures can be added without a
-    release
+- **Family detection follow-ups** (deliberately left out of the first pass)
+  - Arch-to-family table: many model families share the `llama` GGUF
+    architecture, so the architecture alone undershoots name detection
+  - Fix KNOWN_FAMILIES ordering so `mistral3`, `mistral4`,
+    `granitemoeshared`, and `qwencoder` are not shadowed by their prefixes
+  - Normalize dots in name-based detection (e.g. `Qwen2.5` → `qwen25`)
+  - Optional `families:` / `custom_families:` config sections instead of
+    piggybacking arch-named blocks on `defaults:`
+  - Doctor checks for shadowed / duplicate-spelling blocks (e.g. a user
+    `gpt-oss:` next to the shipped `gpt_oss:`) and stale GGUF versions
+  - Make `show` display the same resolved settings `serve` uses, so the
+    two cannot diverge
+  - Filter `None` setting values on the architecture path, like the name
+    path does
+  - Document the family-list checklist in AGENTS.md (KNOWN_FAMILIES ≡
+    models.yaml families ≡ doctor's list)
 - **Serving**
   - `--bind` passthrough and a clear note about the default network exposure
     of `llama serve`
