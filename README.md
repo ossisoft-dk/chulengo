@@ -198,7 +198,7 @@ Chulengo uses two sources to determine the appropriate model settings:
 
 When a model's GGUF file is available in the HuggingFace cache, Chulengo reads the `general.architecture` field directly from the GGUF metadata. This is the authoritative source used by llama.cpp. The matching `defaults:` block may be named after the raw architecture or its underscore form — a `gpt-oss` GGUF picks up the shipped `gpt_oss` block.
 
-A cached GGUF that fails to pin down a family is reported instead of silently guessed: when the architecture cannot be read, or when it has no `defaults:` block, `serve` and `show` print a warning to stderr and fall back to name-based detection (and, failing that, the `generic` block). The warning names the fallback actually used, e.g. `Warning: could not read the architecture from the cached GGUF; using qwen3 defaults from the model name`, or suggests the missing block: `architecture 'plamo' has no settings; add a 'plamo:' block under defaults: in ~/.config/chulengo/models.yaml`.
+A cached GGUF that fails to pin down a family is reported instead of silently guessed: when the architecture cannot be read, or when it has no `defaults:` block, `serve` and `show` print a warning to stderr and fall back to name-based detection (and, failing that, the `generic` block). The warning names the fallback actually used, e.g. `Warning: could not read the architecture from the cached GGUF; using qwen3 defaults from the model name`, and for a missing block also suggests adding it: `architecture 'plamo' has no settings; using qwen3 defaults from the model name; add a 'plamo:' block under defaults: in ~/.config/chulengo/models.yaml`.
 
 ### Fallback: Name-based Detection
 

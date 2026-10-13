@@ -66,8 +66,6 @@ KNOWN_FAMILIES = [
     "qwencoder",
 ]
 
-# "generic" is the always-valid fallback family, so it counts as known.
-
 # Architectures llama.cpp knows about (GGUF general.architecture values).
 # A `defaults:` block named after any of them is valid, so settings for a
 # new architecture can be configured without waiting for a chulengo release.
@@ -413,9 +411,10 @@ def resolve_model_family(model_name: str) -> FamilyResolution:
     defaults = settings.get("defaults", {})
     warnings: list[str] = []
 
-    # Set when a cached GGUF exists but cannot pick a settings block.
-    unknown_arch_note: str | None = None
-    unreadable_note: str | None = None
+    # Set when a cached GGUF exists but cannot pick a settings block: what
+    # went wrong, and an optional hint for fixing it.
+    gguf_note: str | None = None
+    gguf_hint = ""
 
     # Priority 1: Try to get architecture from GGUF file metadata
     cache_info = get_model_cache_info(model_name)
@@ -425,13 +424,13 @@ def resolve_model_family(model_name: str) -> FamilyResolution:
             for key in (gguf_architecture, gguf_architecture.replace("-", "_")):
                 if key in defaults:
                     return FamilyResolution(defaults[key].copy(), [])
-            unknown_arch_note = (
-                f"architecture '{gguf_architecture}' has no settings; "
-                f"add a '{gguf_architecture}:' block under defaults: "
+            gguf_note = f"architecture '{gguf_architecture}' has no settings"
+            gguf_hint = (
+                f"; add a '{gguf_architecture}:' block under defaults: "
                 f"in {SETTINGS_FILE}"
             )
         else:
-            unreadable_note = "could not read the architecture from the cached GGUF"
+            gguf_note = "could not read the architecture from the cached GGUF"
 
     # Priority 2: Detect family from model name (for models without GGUF in
     # cache). User-configured architecture blocks are consulted first so
@@ -450,11 +449,9 @@ def resolve_model_family(model_name: str) -> FamilyResolution:
         resolved = defaults.get("generic", {})
         source = "generic"
 
-    if unknown_arch_note:
-        warnings.append(unknown_arch_note)
-    if unreadable_note:
+    if gguf_note:
         warnings.append(
-            f"{unreadable_note}; using {source} defaults from the model name"
+            f"{gguf_note}; using {source} defaults from the model name{gguf_hint}"
         )
 
     return FamilyResolution(resolved, warnings)
@@ -875,7 +872,9 @@ def cmd_show(args: argparse.Namespace) -> int:
         print(f"Warning: {warning}", file=sys.stderr)
 
     # Detect family and show settings. User-configured architecture blocks
-    # take precedence here too, so show and serve agree on the family.
+    # take precedence here too, as in serve's name fallback. show still
+    # detects by name only, so it can differ from serve when a cached GGUF
+    # architecture decides (see ROADMAP.md).
     defaults = settings.get("defaults", {})
     family = detect_model_family(
         model_name, families=[*_user_arch_families(defaults), *KNOWN_FAMILIES]

@@ -408,8 +408,10 @@ class TestResolveModelFamily:
 
         assert len(resolution.warnings) == 1
         warning = resolution.warnings[0]
-        assert "architecture 'plamo' has no settings" in warning
-        assert "add a 'plamo:' block" in warning
+        assert warning.startswith(
+            "architecture 'plamo' has no settings; "
+            "using qwen3 defaults from the model name; add a 'plamo:' block"
+        )
         assert str(chulengo.SETTINGS_FILE) in warning
         # Name detection still decides the settings.
         assert resolution.settings["ctx_size"] == 16384
@@ -418,7 +420,9 @@ class TestResolveModelFamily:
         """With no name match either, generic defaults apply (plus warning)."""
         resolution = self._resolve("unknown/model", mocker, arch="plamo")
 
-        assert "architecture 'plamo' has no settings" in resolution.warnings[0]
+        assert resolution.warnings[0].startswith(
+            "architecture 'plamo' has no settings; using generic defaults"
+        )
         assert resolution.settings["ctx_size"] == 4096
 
     def test_unreadable_arch_warns_with_name_fallback(self, mocker):
