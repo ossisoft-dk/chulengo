@@ -372,23 +372,41 @@ def resolve_model_family(model_name: str) -> FamilyResolution:
 
     Resolution order, first match wins:
 
-    1. ``general.architecture`` from the cached GGUF, if a block named after
-       it exists under ``defaults``.
+    1. ``general.architecture`` from the cached GGUF, if a block named
+       after it exists under ``defaults`` (either the raw architecture or
+       its underscore form, so "gpt-oss" matches the shipped "gpt_oss").
     2. name-based family detection (for models without a usable GGUF).
     3. the ``generic`` fallback block.
 
-    Never prints; warnings are returned so callers can route them (e.g. to
-    stderr) as they see fit.
+    A cached GGUF that fails to pin down the family (unreadable
+    architecture, or no matching ``defaults`` block) yields a warning
+    instead of a silent guess; resolution still falls back to 2 and 3.
+    Never prints; warnings are returned so callers can route them (e.g.
+    to stderr) as they see fit.
     """
     settings = load_settings()
     defaults = settings.get("defaults", {})
+    warnings: list[str] = []
+
+    # Set when a cached GGUF exists but cannot pick a settings block.
+    unknown_arch_note: str | None = None
+    unreadable_note: str | None = None
 
     # Priority 1: Try to get architecture from GGUF file metadata
     cache_info = get_model_cache_info(model_name)
     if cache_info and cache_info.get("gguf_path"):
         gguf_architecture = get_gguf_architecture(Path(cache_info["gguf_path"]))
-        if gguf_architecture and gguf_architecture in defaults:
-            return FamilyResolution(defaults[gguf_architecture].copy(), [])
+        if gguf_architecture:
+            for key in (gguf_architecture, gguf_architecture.replace("-", "_")):
+                if key in defaults:
+                    return FamilyResolution(defaults[key].copy(), [])
+            unknown_arch_note = (
+                f"architecture '{gguf_architecture}' has no settings; "
+                f"add a '{gguf_architecture}:' block under defaults: "
+                f"in {SETTINGS_FILE}"
+            )
+        else:
+            unreadable_note = "could not read the architecture from the cached GGUF"
 
     # Priority 2: Detect family from model name (for models without GGUF in cache)
     family = detect_model_family(model_name)
@@ -396,12 +414,21 @@ def resolve_model_family(model_name: str) -> FamilyResolution:
     if family and family in defaults:
         family_settings = defaults[family].copy()
         # Remove None values (for optional args)
-        return FamilyResolution(
-            {k: v for k, v in family_settings.items() if v is not None}, []
+        resolved = {k: v for k, v in family_settings.items() if v is not None}
+        source = family
+    else:
+        # Fall back to generic defaults
+        resolved = defaults.get("generic", {})
+        source = "generic"
+
+    if unknown_arch_note:
+        warnings.append(unknown_arch_note)
+    if unreadable_note:
+        warnings.append(
+            f"{unreadable_note}; using {source} defaults from the model name"
         )
 
-    # Fall back to generic defaults
-    return FamilyResolution(defaults.get("generic", {}), [])
+    return FamilyResolution(resolved, warnings)
 
 
 def get_default_settings(model_name: str) -> dict:
@@ -809,6 +836,11 @@ def cmd_show(args: argparse.Namespace) -> int:
                 for info in general_info:
                     print(f"  {info}")
 
+    # Surface the same family-resolution warnings `serve` would print
+    # (e.g. a cached GGUF whose architecture chulengo cannot use).
+    for warning in resolve_model_family(model_name).warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
+
     # Detect family and show settings
     family = detect_model_family(model_name)
     if family:
@@ -853,6 +885,7 @@ def build_llama_command(
     port: int | None = None,
     extra_args: list[str] | None = None,
     alias: str | None = None,
+    family_resolution: FamilyResolution | None = None,
     # Override arguments
     ctx_size: int | None = None,
     flash_attn: str | None = None,
@@ -863,7 +896,12 @@ def build_llama_command(
     cache_type_v: str | None = None,
     chat_template_file: str | None = None,
 ) -> list[str]:
-    """Build the llama.cpp serve command with settings."""
+    """Build the llama.cpp serve command with settings.
+
+    ``family_resolution`` lets a caller that already resolved the family
+    (e.g. cmd_serve, to print warnings) pass the result through; ``None``
+    resolves here via get_default_settings(), as before.
+    """
     cmd = ["llama", "serve"]
 
     # Add port if specified
@@ -882,8 +920,12 @@ def build_llama_command(
     # Add model
     cmd.extend(["--hf-repo", model_name])
 
-    # Get default settings
-    defaults = get_default_settings(model_name)
+    # Get default settings: from a pre-resolved family (cmd_serve resolves
+    # once so it can print warnings), or resolve here as before.
+    if family_resolution is not None:
+        defaults = family_resolution.settings
+    else:
+        defaults = get_default_settings(model_name)
 
     # Merge settings (user overrides take precedence). `alias` is emitted as a
     # flag above, not a setting, so drop it from the merged dict.
@@ -1101,11 +1143,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return 1
     model_name = resolved
 
+    # Resolve family settings once, surface any warnings, and pass the
+    # resolution through so build_llama_command does not resolve twice.
+    resolution = resolve_model_family(model_name)
+    for warning in resolution.warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
+
     # Build command
     cmd = build_llama_command(
         model_name=model_name,
         port=args.port,
         alias=args.alias,
+        family_resolution=resolution,
         # Override arguments
         ctx_size=args.ctx_size,
         flash_attn=args.flash_attn,

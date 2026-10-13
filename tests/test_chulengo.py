@@ -351,6 +351,104 @@ class TestGetDefaultSettings:
         assert result["ctx_size"] == 4096
 
 
+class TestResolveModelFamily:
+    """Tests for resolve_model_family() warnings and fallbacks."""
+
+    SETTINGS = {
+        "defaults": {
+            "qwen3": {"ctx_size": 16384, "flash_attn": "on"},
+            "gpt_oss": {"ctx_size": 131072},
+            "llama": {"ctx_size": 8192},
+            "generic": {"ctx_size": 4096, "flash_attn": "off"},
+        },
+        "model_overrides": {},
+    }
+
+    def _resolve(self, model_name, mocker, *, arch=None, cached=True):
+        mocker.patch("chulengo.load_settings", return_value=self.SETTINGS)
+        mocker.patch(
+            "chulengo.get_model_cache_info",
+            return_value=(
+                {
+                    "cache_dir": "/cache/test/model",
+                    "snapshot": "/cache/test/model/snapshots/abc",
+                    "gguf_files": ["model.gguf"],
+                    "gguf_path": "/cache/test/model/model.gguf",
+                }
+                if cached
+                else None
+            ),
+        )
+        mocker.patch("chulengo.get_gguf_architecture", return_value=arch)
+        return chulengo.resolve_model_family(model_name)
+
+    def test_known_arch_uses_block_without_warning(self, mocker):
+        """A cached GGUF with a known architecture resolves silently."""
+        resolution = self._resolve("some/model", mocker, arch="llama")
+
+        assert resolution.warnings == []
+        assert resolution.settings["ctx_size"] == 8192
+
+    def test_hyphenated_arch_matches_underscore_block(self, mocker):
+        """A 'gpt-oss' GGUF matches the shipped 'gpt_oss' block, warning-free.
+
+        The model name may or may not contain 'gpt-oss'; the architecture
+        alone decides.
+        """
+        for name in ("openai/gpt-oss-20b", "openai/ft-20b"):
+            resolution = self._resolve(name, mocker, arch="gpt-oss")
+
+            assert resolution.warnings == []
+            assert resolution.settings["ctx_size"] == 131072
+
+    def test_unknown_arch_warns_and_falls_back_to_name(self, mocker):
+        """A readable architecture with no settings block warns, then uses
+        name detection."""
+        resolution = self._resolve("Qwen/Qwen3-8B", mocker, arch="plamo")
+
+        assert len(resolution.warnings) == 1
+        warning = resolution.warnings[0]
+        assert "architecture 'plamo' has no settings" in warning
+        assert "add a 'plamo:' block" in warning
+        assert str(chulengo.SETTINGS_FILE) in warning
+        # Name detection still decides the settings.
+        assert resolution.settings["ctx_size"] == 16384
+
+    def test_unknown_arch_falls_back_to_generic(self, mocker):
+        """With no name match either, generic defaults apply (plus warning)."""
+        resolution = self._resolve("unknown/model", mocker, arch="plamo")
+
+        assert "architecture 'plamo' has no settings" in resolution.warnings[0]
+        assert resolution.settings["ctx_size"] == 4096
+
+    def test_unreadable_arch_warns_with_name_fallback(self, mocker):
+        """An unreadable cached GGUF warns and names the fallback source."""
+        resolution = self._resolve("Qwen/Qwen3-8B", mocker, arch=None)
+
+        assert resolution.warnings == [
+            "could not read the architecture from the cached GGUF; "
+            "using qwen3 defaults from the model name"
+        ]
+        assert resolution.settings["ctx_size"] == 16384
+
+    def test_unreadable_arch_warns_with_generic_fallback(self, mocker):
+        """Unreadable arch + no name match warns about the generic fallback."""
+        resolution = self._resolve("unknown/model", mocker, arch=None)
+
+        assert resolution.warnings == [
+            "could not read the architecture from the cached GGUF; "
+            "using generic defaults from the model name"
+        ]
+        assert resolution.settings["ctx_size"] == 4096
+
+    def test_no_cached_gguf_means_no_warning(self, mocker):
+        """Without a cached GGUF there is nothing to warn about."""
+        resolution = self._resolve("Qwen/Qwen3-8B", mocker, cached=False)
+
+        assert resolution.warnings == []
+        assert resolution.settings["ctx_size"] == 16384
+
+
 class TestBuildLlamaCommand:
     """Tests for build_llama_command() function."""
 
@@ -659,6 +757,38 @@ class TestCmdShow:
         # The model not being in cache is shown with warning in stderr
         assert "nonexistent/model" in captured.err
         assert "chulengo ls" in captured.err
+
+    def test_show_prints_family_resolution_warning(self, mocker, capsys):
+        """Family-resolution warnings go to stderr; stdout format is unchanged."""
+        mock_args = MagicMock()
+        mock_args.model = "Qwen/Qwen3-8B"
+
+        cache_info = {
+            "cache_dir": "/cache/Qwen/Qwen3-8B",
+            "snapshot": "/cache/Qwen/Qwen3-8B/snapshots/123",
+            "gguf_files": ["model-Q4_K_M.gguf"],
+            "gguf_path": "/cache/Qwen/Qwen3-8B/model-Q4_K_M.gguf",
+        }
+
+        settings = {
+            "defaults": {
+                "qwen3": {"ctx_size": 16384},
+                "generic": {"ctx_size": 4096},
+            },
+            "model_overrides": {},
+        }
+
+        with patch("chulengo.load_settings", return_value=settings):
+            with patch("chulengo.detect_model_family", return_value="qwen3"):
+                with patch("chulengo.get_model_cache_info", return_value=cache_info):
+                    with patch("chulengo.get_gguf_architecture", return_value="plamo"):
+                        with patch("chulengo.extract_gguf_metadata", return_value=None):
+                            result = chulengo.cmd_show(mock_args)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "architecture 'plamo' has no settings" in captured.err
+        assert "Detected family: qwen3" in captured.out
 
 
 class TestGetModelCacheInfo:
@@ -1537,7 +1667,11 @@ class TestAliases:
     def test_serve_by_alias_resolves_repo_and_emits_alias(self, mocker):
         settings = {"defaults": {}, "model_overrides": {"org/repo": {"alias": "lfm"}}}
         mocker.patch.object(chulengo, "load_settings", return_value=settings)
-        mocker.patch.object(chulengo, "get_default_settings", return_value={})
+        mocker.patch.object(
+            chulengo,
+            "resolve_model_family",
+            return_value=chulengo.FamilyResolution({}, []),
+        )
         popen = mocker.patch("chulengo.subprocess.Popen")
         popen.return_value.wait.return_value = 0
         ns = self._ns(model="lfm")
@@ -1582,6 +1716,91 @@ class TestAliases:
         assert chulengo.doctor_config(settings) == []
 
 
+class TestServeFamilyWarnings:
+    """End-to-end serve tests for family-resolution warnings."""
+
+    SETTINGS = {
+        "defaults": {
+            "qwen3": {"ctx_size": 16384, "flash_attn": "on"},
+            "gpt_oss": {"ctx_size": 131072},
+            "llama": {"ctx_size": 8192},
+            "generic": {"ctx_size": 4096, "flash_attn": "off"},
+        },
+        "model_overrides": {},
+    }
+
+    def _serve(self, mocker, model, *, arch=None, cached=True):
+        """Run `serve` through main(); assert it exits 0, return the command."""
+        mocker.patch.object(sys, "argv", ["chulengo", "serve", model])
+        mocker.patch("chulengo.load_settings", return_value=self.SETTINGS)
+        mocker.patch(
+            "chulengo.get_model_cache_info",
+            return_value=(
+                {
+                    "cache_dir": "/cache/m",
+                    "snapshot": "/cache/m/snapshots/abc",
+                    "gguf_files": ["model.gguf"],
+                    "gguf_path": "/cache/m/model.gguf",
+                }
+                if cached
+                else None
+            ),
+        )
+        mocker.patch("chulengo.get_gguf_architecture", return_value=arch)
+        popen = mocker.patch("chulengo.subprocess.Popen")
+        popen.return_value.wait.return_value = 0
+
+        assert chulengo.main() == 0
+        return popen.call_args.args[0]
+
+    def test_serve_warns_for_arch_without_settings(self, mocker, capsys):
+        """Unknown cached architecture: stderr warning, name fallback, exit 0."""
+        cmd = self._serve(mocker, "Qwen/Qwen3-8B", arch="plamo")
+
+        captured = capsys.readouterr()
+        assert "architecture 'plamo' has no settings" in captured.err
+        assert "add a 'plamo:' block" in captured.err
+        # Name fallback still picked qwen3; stdout format is unchanged.
+        assert "Running: llama serve" in captured.out
+        assert cmd[cmd.index("--ctx-size") + 1] == "16384"
+
+    def test_serve_warns_for_unreadable_arch(self, mocker, capsys):
+        """Unreadable cached GGUF: warning names the fallback source."""
+        cmd = self._serve(mocker, "Qwen/Qwen3-8B", arch=None)
+
+        captured = capsys.readouterr()
+        assert "could not read the architecture from the cached GGUF" in captured.err
+        assert "using qwen3 defaults from the model name" in captured.err
+        assert "Running: llama serve" in captured.out
+        assert cmd[cmd.index("--ctx-size") + 1] == "16384"
+
+    def test_serve_hyphenated_arch_uses_gpt_oss_block(self, mocker, capsys):
+        """Cached gpt-oss uses the gpt_oss block with no warning, with or
+        without 'gpt-oss' in the model name."""
+        for name in ("openai/gpt-oss-20b", "openai/ft-20b"):
+            cmd = self._serve(mocker, name, arch="gpt-oss")
+
+            captured = capsys.readouterr()
+            assert captured.err == ""
+            assert cmd[cmd.index("--ctx-size") + 1] == "131072"
+
+    def test_serve_llama_arch_without_warning(self, mocker, capsys):
+        """A cached llama-architecture model resolves silently to llama."""
+        cmd = self._serve(mocker, "some/model", arch="llama")
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        assert cmd[cmd.index("--ctx-size") + 1] == "8192"
+
+    def test_serve_no_cached_gguf_no_warning(self, mocker, capsys):
+        """No cached GGUF: silent name-based resolution, as before."""
+        cmd = self._serve(mocker, "Qwen/Qwen3-8B", cached=False)
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        assert cmd[cmd.index("--ctx-size") + 1] == "16384"
+
+
 class TestServeJinja:
     """Tests for how `serve --jinja` combines with jinja from the config."""
 
@@ -1592,7 +1811,8 @@ class TestServeJinja:
             return_value={"defaults": {}, "model_overrides": {}},
         )
         mocker.patch(
-            "chulengo.get_default_settings", return_value={"jinja": config_jinja}
+            "chulengo.resolve_model_family",
+            return_value=chulengo.FamilyResolution({"jinja": config_jinja}, []),
         )
         mock_popen = mocker.patch("chulengo.subprocess.Popen")
         mock_popen.return_value.wait.return_value = 0
