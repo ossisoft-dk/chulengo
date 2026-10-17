@@ -1849,6 +1849,7 @@ class TestAliases:
             cache_type_v=None,
             chat_template_file=None,
             target=None,
+            dry_run=False,
         )
         base.update(kwargs)
         return argparse.Namespace(**base)
@@ -2016,6 +2017,38 @@ class TestAliases:
         assert chulengo.cmd_serve(ns) == 1
         popen.assert_not_called()
         assert "matches multiple models" in capsys.readouterr().err
+
+    def test_serve_dry_run_prints_command_without_executing(self, mocker, capsys):
+        """--dry-run prints the fully-resolved command and does not launch
+        llama (exit 0)."""
+        settings = {"defaults": {"qwen3": {"ctx_size": 16384}}, "model_overrides": {}}
+        mocker.patch.object(chulengo, "load_settings", return_value=settings)
+        mocker.patch.object(
+            chulengo,
+            "resolve_model_family",
+            return_value=chulengo.FamilyResolution({"ctx_size": 16384}, []),
+        )
+        cmd = [
+            "llama",
+            "serve",
+            "--port",
+            "11853",
+            "--hf-repo",
+            "Qwen/Qwen3-8B",
+            "--ctx-size",
+            "16384",
+        ]
+        mocker.patch.object(chulengo, "build_llama_command", return_value=cmd)
+        popen = mocker.patch("chulengo.subprocess.Popen")
+
+        ns = self._ns(model="Qwen/Qwen3-8B", port=11853, dry_run=True)
+
+        assert chulengo.cmd_serve(ns) == 0
+        captured = capsys.readouterr()
+        assert "Dry run" in captured.out
+        assert " ".join(cmd) in captured.out
+        assert "Running:" not in captured.out
+        popen.assert_not_called()
 
     # --- doctor ----------------------------------------------------------
 

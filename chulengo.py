@@ -1311,6 +1311,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
         chat_template_file=args.chat_template_file,
     )
 
+    if args.dry_run:
+        # Print the exact command that would run (all defaults and overrides
+        # resolved) without executing it.
+        print("Dry run — not executing:")
+        print(f"  {' '.join(cmd)}")
+        return 0
+
     print(f"Running: {' '.join(cmd)}")
 
     # Execute the command
@@ -1508,6 +1515,11 @@ def main() -> int:
     serve_parser.add_argument("--cache-type-k", help="Override cache type for keys")
     serve_parser.add_argument("--cache-type-v", help="Override cache type for values")
     serve_parser.add_argument("--chat-template-file", help="Path to chat template file")
+    serve_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the exact command that would run without executing it",
+    )
     serve_parser.set_defaults(func=cmd_serve)
 
     # doctor command
