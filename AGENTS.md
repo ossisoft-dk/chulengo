@@ -55,6 +55,17 @@ from the same flag set and should stay identical in shape.
 
 - For Python files the tools are the authority: write, then uv run ruff format and uv run ruff check (this is what catches hand-typed whitespace drift). For Markdown keep bullets single-line so no continuation indentation is needed.
 
+## Family list
+
+Chulengo's model families live in two places that must stay in sync:
+
+- `KNOWN_FAMILIES` in `chulengo.py` — the name-detection order, **most specific first**. A family that is also a prefix of another must come AFTER it, or it shadows the longer name: `mistral3`/`mistral4` before `mistral`, `granitemoeshared` before `granitemoe` before `granite`, `qwencoder` before `qwen`, `llama3_2`/`llama3_1`/`llama3` before `llama`, `qwen35moe` before `qwen35`, ...
+- `defaults:` blocks in `models.yaml` — keep them in the **same order** as `KNOWN_FAMILIES` so the two are trivial to diff.
+
+`chulengo doctor` accepts, under `defaults:`: every shipped family, any llama.cpp GGUF architecture name (`BUILTIN_ARCHES`), and `generic` (the always-valid fallback). It also flags duplicate-spelling blocks (e.g. a user `gpt-oss:` next to the shipped `gpt_oss:`).
+
+Architectures that several blocks share need an entry in `LLAMA_ARCH_CANDIDATES` (the arch-to-family table; today only `llama`, shared by llama3_2/llama3_1/llama3, mistral/mixtral and codestral). Never add a family that has its own GGUF architecture there — `mistral3`, `mistral4`, `qwen35`, `qwen35moe` resolve via their own arch blocks and must not be name-shadowed by the plain `mistral`/`llama` names.
+
 ## Verification loop
 
 After any change, run:

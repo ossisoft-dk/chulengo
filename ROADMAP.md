@@ -6,14 +6,6 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
 
 ## Next (near-term)
 
-- **Family detection follow-ups** (deliberately left out of the first pass)
-  - Arch-to-family table for the `llama` GGUF architecture: cached Llama-3.x, Mistral, Mixtral and Codestral models always get the plain `llama` block, so their shipped blocks never apply. When several candidates match by name, the most specific wins (`llama3_1` over `llama3`), and `mistral3`/`mistral4` must not list `mistral` as a candidate, or "Mistral-Small-3.1" lands on the plain `mistral` block
-  - Verify the GGUF arch of `codestral`, `qwopus`, `qwancoder`, `qwencoder`, `laguna`, `granitemoeshared` and `phi` before adding them to the table
-  - Fix `KNOWN_FAMILIES` ordering so `mistral3`, `mistral4`, `granitemoeshared` and `qwencoder` are not shadowed by their prefixes, plus a test that every family resolves to itself by name and that real HF-style names (e.g. "Llama-3.1-8B") resolve to the right family
-  - Normalize dots in name-based detection: "Qwen3.5" resolves to `qwen3` instead of `qwen35`, and "Llama-3.1"/"Llama-3.2" to `llama3`
-  - Doctor check for duplicate-spelling blocks (e.g. a user `gpt-oss:` next to the shipped `gpt_oss:`)
-  - Make `show` display the same resolved settings `serve` uses, so the two cannot diverge, and say whether the family came from the GGUF architecture or the model name
-  - Document a family-list checklist in AGENTS.md: `KNOWN_FAMILIES` order, `models.yaml` blocks, doctor's accepted keys (shipped families, GGUF arch names, `generic`)
 - **Serving**
   - `--bind` passthrough and a clear note about the default network exposure
     of `llama serve`

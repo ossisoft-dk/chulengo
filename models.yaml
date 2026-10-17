@@ -4,35 +4,16 @@
 # A block may instead be named after any llama.cpp architecture (e.g. plamo,
 # llama4) that chulengo does not know natively; such blocks are valid config and
 # are matched by both architecture and model name
+#
+# Keep these blocks in the same order as KNOWN_FAMILIES in chulengo.py
+# (most specific first, so a shorter name never shadows a longer one); see
+# the "Family list" section of AGENTS.md.
 
 defaults:
   generic:
     ctx_size: 4096
     flash_attn: off
     reasoning: off
-
-  # Qwen models
-  qwen:
-    ctx_size: 8192
-    flash_attn: on
-    reasoning: off
-    jinja: on
-
-  qwen3:
-    ctx_size: 16384
-    flash_attn: on
-    reasoning: off
-    jinja: on
-    cache_type_k: q8_0
-    cache_type_v: q8_0
-
-  qwen35:
-    ctx_size: 16384
-    flash_attn: on
-    reasoning: off
-    jinja: on
-    cache_type_k: q8_0
-    cache_type_v: q8_0
 
   qwen35moe:
     ctx_size: 32768
@@ -43,11 +24,26 @@ defaults:
     cache_type_v: q8_0
     spec_type: draft
 
+  qwen35:
+    ctx_size: 16384
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+
   qwancoder:
     ctx_size: 32768
     flash_attn: on
     reasoning: off
     jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+
+  qwopus:
+    ctx_size: 204800
+    flash_attn: on
+    reasoning: off
     cache_type_k: q8_0
     cache_type_v: q8_0
 
@@ -57,39 +53,14 @@ defaults:
     reasoning: off
     jinja: on
 
-  qwopus:
-    ctx_size: 204800
-    flash_attn: on
-    reasoning: off
-    cache_type_k: q8_0
-    cache_type_v: q8_0
-
   gpt_oss:
     ctx_size: 16384
     flash_attn: on
     reasoning: off
     jinja: on
 
-  phi:
-    ctx_size: 2048
-    flash_attn: on
-    reasoning: off
-    jinja: on
-
-  # Llama models (older mistral/mixtral use llama architecture)
-  llama:
-    ctx_size: 4096
-    flash_attn: on
-    reasoning: off
-
-  llama3:
-    ctx_size: 8192
-    flash_attn: on
-    reasoning: off
-    jinja: on
-
-  llama3_1:
-    ctx_size: 8192
+  codestral:
+    ctx_size: 32768
     flash_attn: on
     reasoning: off
     jinja: on
@@ -104,95 +75,32 @@ defaults:
     cache_type_k: q8_0
     cache_type_v: q8_0
 
-  # Gemma models
-  gemma:
-    ctx_size: 4096
-    flash_attn: off
-    reasoning: off
-
-  gemma2:
-    ctx_size: 4096
-    flash_attn: off
-    reasoning: off
-
-  gemma3:
+  llama3_1:
     ctx_size: 8192
-    flash_attn: off
-    reasoning: off
-    cache_type_k: q8_0
-    cache_type_v: q8_0
-    spec_type: draft
-
-  # Granite models
-  granite:
-    ctx_size: 4096
-    flash_attn: on
-    reasoning: off
-    jinja: on
-
-  granitemoe:
-    ctx_size: 4096
-    flash_attn: on
-    reasoning: off
-    jinja: on
-
-  granitemoeshared:
-    ctx_size: 4096
-    flash_attn: on
-    reasoning: off
-    jinja: on
-
-  # Deepseek models
-  deepseek:
-    ctx_size: 16384
-    flash_attn: on
-    reasoning: off
-
-  deepseek2:
-    ctx_size: 16384
-    flash_attn: on
-    reasoning: off
-
-  # GLM models
-  glm4:
-    ctx_size: 8192
-    flash_attn: on
-    reasoning: off
-    jinja: on
-
-  glm4moe:
-    ctx_size: 32768
     flash_attn: on
     reasoning: off
     jinja: on
     cache_type_k: q8_0
     cache_type_v: q8_0
-    spec_type: draft
 
-  # Nemotron models
-  nemotron:
+  llama3:
     ctx_size: 8192
     flash_attn: on
     reasoning: off
     jinja: on
 
-  nemotron_h:
-    ctx_size: 8192
+  # Llama models (older mistral/mixtral use llama architecture)
+  llama:
+    ctx_size: 4096
     flash_attn: on
     reasoning: off
-    jinja: on
-
-  mistral:
-    ctx_size: 8192
-    flash_attn: on
-    reasoning: off
-    jinja: on
 
   mixtral:
     ctx_size: 32768
     flash_attn: on
     reasoning: off
     jinja: on
+
   # Mistral models (mistral3 = new Mistral, mistral4 = new Mixtral)
   mistral3:
     ctx_size: 8192
@@ -208,6 +116,27 @@ defaults:
     cache_type_k: q8_0
     cache_type_v: q8_0
 
+  mistral:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  # Qwen models
+  qwen3:
+    ctx_size: 16384
+    flash_attn: on
+    reasoning: off
+    jinja: on
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+
+  qwen:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
   # Laguna models (MoE)
   laguna:
     ctx_size: 262144
@@ -215,14 +144,89 @@ defaults:
     reasoning: off
     jinja: on
 
-  # Codestral models
-  codestral:
+  # GLM models
+  glm4moe:
     ctx_size: 32768
     flash_attn: on
     reasoning: off
     jinja: on
     cache_type_k: q8_0
     cache_type_v: q8_0
+    spec_type: draft
+
+  glm4:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  # Gemma models
+  gemma3:
+    ctx_size: 8192
+    flash_attn: off
+    reasoning: off
+    cache_type_k: q8_0
+    cache_type_v: q8_0
+    spec_type: draft
+
+  gemma2:
+    ctx_size: 4096
+    flash_attn: off
+    reasoning: off
+
+  gemma:
+    ctx_size: 4096
+    flash_attn: off
+    reasoning: off
+
+  # Granite models
+  granitemoeshared:
+    ctx_size: 4096
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  granitemoe:
+    ctx_size: 4096
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  granite:
+    ctx_size: 4096
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  phi:
+    ctx_size: 2048
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  # Deepseek models
+  deepseek2:
+    ctx_size: 16384
+    flash_attn: on
+    reasoning: off
+
+  deepseek:
+    ctx_size: 16384
+    flash_attn: on
+    reasoning: off
+
+  # Nemotron models
+  nemotron_h:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
+
+  nemotron:
+    ctx_size: 8192
+    flash_attn: on
+    reasoning: off
+    jinja: on
 
   # Liquid AI LFM2 / LFM2.5 models (hybrid conv + attention)
   lfm2:

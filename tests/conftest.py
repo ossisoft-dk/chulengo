@@ -81,15 +81,19 @@ def sample_model_names():
 
 @pytest.fixture
 def sample_model_families():
-    """Return mapping of model names to their expected families."""
+    """Return mapping of model names to their expected name-detection
+    families (pure name matching, no GGUF). Dots separate a minor version in
+    name detection, so 'Llama-3.1-8B' resolves to llama3, not llama3_1; the
+    narrower blocks (llama3_1, qwancoder, qwopus) only apply when a cached
+    GGUF reports them."""
     return {
         "Qwen/Qwen3-8B": "qwen3",
-        "Qwen/Qwen2.5-Coder": "qwancoder",
+        "Qwen/Qwen2.5-Coder": "qwen",  # qwancoder not reachable by this name
         "meta-llama/Llama-3-8B": "llama3",
-        "meta-llama/Llama-3.1-8B": "llama3_1",
+        "meta-llama/Llama-3.1-8B": "llama3",  # name-only: dots keep minor version
         "mistralai/Mistral-7B-Instruct-v0.3": "mistral",
         "mistralai/Mixtral-8x7B-Instruct-v7.1": "mixtral",
-        "google/gemma-2-9b-it": "gemma",  # gemma-2 matches gemma first
+        "google/gemma-2-9b-it": "gemma2",
         "google/gemma-3-27B-it": "gemma3",
         "codestral/codestral-embeddings": "codestral",
         "Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF": "qwopus",

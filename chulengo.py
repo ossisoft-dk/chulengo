@@ -31,39 +31,73 @@ DEFAULT_SETTINGS_FILE = Path(os.path.realpath(__file__)).parent / "models.yaml"
 
 # Known model families. Kept as a module-level constant so family detection and
 # config validation (chulengo doctor) share a single source of truth.
+#
+# Ordered most specific first so a shorter prefix never shadows a longer family
+# name: mistral3/mistral4 before mistral, granitemoeshared before granitemoe
+# before granite, qwencoder before qwen, llama3_2/llama3_1/llama3 before llama,
+# qwen35moe before qwen35, ... Keep the `defaults:` blocks in models.yaml in the
+# same order so the two are trivial to diff (see AGENTS.md "Family list").
 KNOWN_FAMILIES = [
     "qwen35moe",
     "qwen35",
-    "gpt_oss",
     "qwancoder",
     "qwopus",
+    "qwencoder",
+    "gpt_oss",
     "codestral",
     "llama3_2",
     "llama3_1",
     "llama3",
     "llama",
+    "mixtral",
+    "mistral3",
+    "mistral4",
+    "mistral",
     "qwen3",
     "qwen",
     "laguna",
-    "mixtral",
-    "mistral",
-    "mistral3",
-    "mistral4",
     "glm4moe",
     "glm4",
     "gemma3",
     "gemma2",
     "gemma",
+    "granitemoeshared",
     "granitemoe",
     "granite",
-    "granitemoeshared",
     "phi",
     "deepseek2",
     "deepseek",
     "nemotron_h",
     "nemotron",
     "lfm2",
-    "qwencoder",
+]
+
+# GGUF architectures whose block is shared by several shipped families. For
+# these, the raw architecture cannot pick a single settings block by itself, so
+# a cached model falls through to name-based selection against this ordered
+# candidate list (most specific first, base last — see
+# _select_shared_arch_family()). Only `llama` is shared today: Llama-3.x,
+# Mistral, Mixtral and Codestral all report `llama` in their GGUF metadata.
+#
+# Keep families that have their OWN GGUF architecture out of this list:
+# mistral3/mistral4 and qwen35/qwen35moe are real architectures with their own
+# blocks, so listing them here would let the plain `mistral`/`llama` name
+# prefix shadow them. Verified: codestral/mistral/mixtral are `llama`; phi-2
+# reports `phi2` (reached by name, not by this table); qwopus/qwancoder/
+# qwencoder/laguna/granitemoeshared have no `llama` arch and are not reliably
+# reachable by name — the custom-family work in ROADMAP's Later section is
+# their proper home.
+#
+# The model name includes the org, so codestral must come before mistral:
+# "mistralai/Codestral-22B" contains "mistral" via the "mistralai" org.
+LLAMA_ARCH_CANDIDATES = [
+    "codestral",
+    "llama3_2",
+    "llama3_1",
+    "llama3",
+    "mixtral",
+    "mistral",
+    "llama",  # base fallback (never name-matched; always valid if it exists)
 ]
 
 # Architectures llama.cpp knows about (GGUF general.architecture values).
@@ -332,31 +366,24 @@ def detect_model_family(
     """Detect the model family from the model name.
 
     ``families`` overrides the candidate list; order matters, so put more
-    specific names first. ``None`` means the built-in KNOWN_FAMILIES.
+    specific names first (a family that is also a prefix of another must come
+    after it, or it shadows it). ``None`` means the built-in KNOWN_FAMILIES.
+
+    Matching is a normalized substring test: hyphens and underscores are
+    removed from the name, dots are kept as separators. So a minor version in
+    the name ("Qwen3.5", "Llama-3.1") resolves to the base family (``qwen3``,
+    ``llama3``) rather than a version-specific one (``qwen35``,
+    ``llama3_1``); the versioned families are still reached by name when the
+    name literally contains them (``qwen35``, ``llama3_1``).
     """
     if families is None:
         families = KNOWN_FAMILIES
 
-    model_lower = model_name.lower()
-
-    # Order matters - check more specific family names first
+    # Dots are deliberately NOT removed: they separate a minor version, so
+    # "qwen3.5" cannot match "qwen35" and "llama3.1" cannot match "llama3_1".
+    model_norm = re.sub(r"[-_]", "", model_name.lower())
     for family in families:
-        # Normalize both by removing underscores and hyphens
-        family_norm = family.replace("_", "").replace("-", "")
-        model_norm = model_lower.replace("_", "").replace("-", "")
-
-        # For llama variants, check for patterns like "llama-3" or "llama3"
-        if family in ("llama3", "llama3_1", "llama3_2"):
-            base = "llama3"
-            if base in model_norm and base != family:
-                # Check for llama followed by 3 (with potential dot)
-                if not re.search(r"llama[\._-]?3", model_lower):
-                    continue
-            if family_norm in model_norm:
-                return family
-
-        # Standard check for other families
-        if family_norm in model_norm:
+        if re.sub(r"[-_.]", "", family) in model_norm:
             return family
 
     return None
@@ -375,16 +402,56 @@ def _user_arch_families(defaults: dict) -> list[str]:
     ]
 
 
+def _select_shared_arch_family(
+    model_name: str, candidates: list[str], defaults: dict
+) -> str | None:
+    """Pick the most specific family for a shared architecture like `llama`.
+
+    ``candidates`` is ordered most specific first, with the base family last.
+    The base (``candidates[-1]``) is a guaranteed fallback and is never name
+    matched. Leading candidates are name matched with dots dropped — unlike
+    plain name detection, the GGUF has already confirmed the architecture, so
+    "Llama-3.1-8B" can resolve to ``llama3_1`` over ``llama3``. Returns None
+    when no candidate has a ``defaults`` block.
+    """
+    model_norm = re.sub(r"[-_.]", "", model_name.lower())
+    for family in candidates[:-1]:
+        if family in defaults and re.sub(r"[-_.]", "", family) in model_norm:
+            return family
+    base = candidates[-1]
+    return base if base in defaults else None
+
+
+def _family_source_phrase(resolution: "FamilyResolution") -> str:
+    """Describe where a resolved family came from, for `chulengo show`."""
+    if resolution.source == "architecture":
+        return f"GGUF architecture '{resolution.arch}'"
+    if resolution.source == "architecture-name":
+        return f"GGUF '{resolution.arch}' architecture, picked by model name"
+    if resolution.source == "name":
+        return "model name"
+    return "the generic fallback"
+
+
 class FamilyResolution(NamedTuple):
     """Result of resolving a model to its family default settings.
 
     ``warnings`` carries human-readable notes about a degraded resolution
     (e.g. a cached GGUF whose architecture is unreadable); callers decide
     whether and where to print them.
+
+    ``family`` is the settings block resolved to (``None`` for the generic
+    fallback); ``source`` says how it was chosen: "architecture" (block named
+    after the GGUF arch), "architecture-name" (shared arch like ``llama``,
+    narrowed by model name), "name" (no usable GGUF), or "generic". ``arch``
+    is the raw GGUF architecture when it decided the family, else None.
     """
 
     settings: dict
     warnings: list[str]
+    family: str | None = None
+    source: str = "generic"
+    arch: str | None = None
 
 
 def resolve_model_family(model_name: str) -> FamilyResolution:
@@ -421,9 +488,29 @@ def resolve_model_family(model_name: str) -> FamilyResolution:
     if cache_info and cache_info.get("gguf_path"):
         gguf_architecture = get_gguf_architecture(Path(cache_info["gguf_path"]))
         if gguf_architecture:
+            # Shared arch (llama): the architecture alone names several
+            # blocks, so narrow it to the most specific family by model name.
+            if gguf_architecture == "llama":
+                family = _select_shared_arch_family(
+                    model_name, LLAMA_ARCH_CANDIDATES, defaults
+                )
+                if family is not None:
+                    return FamilyResolution(
+                        defaults[family].copy(),
+                        [],
+                        family=family,
+                        source="architecture-name",
+                        arch="llama",
+                    )
             for key in (gguf_architecture, gguf_architecture.replace("-", "_")):
                 if key in defaults:
-                    return FamilyResolution(defaults[key].copy(), [])
+                    return FamilyResolution(
+                        defaults[key].copy(),
+                        [],
+                        family=key,
+                        source="architecture",
+                        arch=gguf_architecture,
+                    )
             gguf_note = f"architecture '{gguf_architecture}' has no settings"
             gguf_hint = (
                 f"; add a '{gguf_architecture}:' block under defaults: "
@@ -443,18 +530,19 @@ def resolve_model_family(model_name: str) -> FamilyResolution:
         family_settings = defaults[family].copy()
         # Remove None values (for optional args)
         resolved = {k: v for k, v in family_settings.items() if v is not None}
-        source = family
+        res_family, res_source = family, "name"
     else:
         # Fall back to generic defaults
         resolved = defaults.get("generic", {})
-        source = "generic"
+        res_family, res_source = None, "generic"
 
     if gguf_note:
         warnings.append(
-            f"{gguf_note}; using {source} defaults from the model name{gguf_hint}"
+            f"{gguf_note}; using {res_family or 'generic'} defaults from "
+            f"the model name{gguf_hint}"
         )
 
-    return FamilyResolution(resolved, warnings)
+    return FamilyResolution(resolved, warnings, family=res_family, source=res_source)
 
 
 def get_default_settings(model_name: str) -> dict:
@@ -486,6 +574,30 @@ def _validate_setting_block(
     for key in block:
         if key not in valid_keys:
             issues.append(f"{context}: unknown setting key '{key}'")
+
+
+def _duplicate_spelling_issues(defaults: dict) -> list[str]:
+    """Flag ``defaults:`` keys that are the same family spelled differently.
+
+    Keys whose normalized spelling (separator characters removed, lowercased)
+    collide — e.g. a user ``gpt-oss:`` block next to the shipped ``gpt_oss:``
+    — are a typo symptom: one of them wins name detection, the other never
+    does. Each key is individually valid, so this catches the collision that
+    keyword checks miss.
+    """
+    issues: list[str] = []
+    by_spelling: dict[str, list[str]] = {}
+    for key in defaults:
+        spelled = re.sub(r"[-_.]", "", str(key)).lower()
+        by_spelling.setdefault(spelled, []).append(str(key))
+    for keys in by_spelling.values():
+        if len(keys) > 1:
+            listed = "; ".join(sorted(keys, key=str))
+            issues.append(
+                f"defaults: keys {listed} are duplicate spellings of the same "
+                "family (they differ only by separator characters)"
+            )
+    return issues
 
 
 def doctor_config(settings: Any) -> list[str]:
@@ -538,6 +650,9 @@ def doctor_config(settings: Any) -> list[str]:
             _validate_setting_block(
                 cfg, f"Family '{family}'", VALID_SETTING_KEYS, issues
             )
+        # 3b. Two keys that differ only by separator (gpt-oss vs gpt_oss) are
+        # the same family twice; one of them can never win name detection.
+        issues.extend(_duplicate_spelling_issues(defaults))
 
     # 4. Per-model overrides (alias is valid here, but not in defaults).
     overrides = settings.get("model_overrides", {}) or {}
@@ -866,30 +981,25 @@ def cmd_show(args: argparse.Namespace) -> int:
                 for info in general_info:
                     print(f"  {info}")
 
-    # Surface the same family-resolution warnings `serve` would print
-    # (e.g. a cached GGUF whose architecture chulengo cannot use).
-    for warning in resolve_model_family(model_name).warnings:
+    # Resolve the family exactly as `serve` will, and show the SAME resolved
+    # settings block, so `show` can never diverge from what `serve` applies.
+    resolution = resolve_model_family(model_name)
+
+    # Surface the family-resolution warnings `serve` would print too.
+    for warning in resolution.warnings:
         print(f"Warning: {warning}", file=sys.stderr)
 
-    # Detect family and show settings. User-configured architecture blocks
-    # take precedence here too, as in serve's name fallback. show still
-    # detects by name only, so it can differ from serve when a cached GGUF
-    # architecture decides (see ROADMAP.md).
-    defaults = settings.get("defaults", {})
-    family = detect_model_family(
-        model_name, families=[*_user_arch_families(defaults), *KNOWN_FAMILIES]
-    )
-    if family:
-        print(f"\nDetected family: {family}")
+    if resolution.family:
+        print(f"\nDetected family: {resolution.family}")
+        print(f"  ({_family_source_phrase(resolution)})")
         print()
-        if family in defaults:
-            print(f"Default settings for {family}:")
-            for k, v in defaults[family].items():
-                # Convert boolean values to on/off strings
-                display_val = v
-                if isinstance(v, bool):
-                    display_val = "on" if v else "off"
-                print(f"  --{k} {display_val}")
+        print(f"Default settings for {resolution.family}:")
+        for k, v in resolution.settings.items():
+            # Convert boolean values to on/off strings
+            display_val = v
+            if isinstance(v, bool):
+                display_val = "on" if v else "off"
+            print(f"  --{k} {display_val}")
     else:
         print("\nCould not detect model family")
 

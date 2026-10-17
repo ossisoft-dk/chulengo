@@ -290,6 +290,46 @@ class TestDetectModelFamily:
         assert chulengo.detect_model_family("Qwen/Qwen2_5-7B") == "qwen"
         assert chulengo.detect_model_family("Qwen/Qwen2-5-7B") == "qwen"
 
+    def test_dots_are_minor_version_separators(self):
+        """Dots separate a minor version: 'Qwen3.5' and 'Llama-3.1' resolve to
+        the base family (qwen3, llama3), not to qwen35 / llama3_1. A versioned
+        family is still reached when the name literally holds it."""
+        assert chulengo.detect_model_family("Qwen/Qwen3.5-72B") == "qwen3"
+        assert chulengo.detect_model_family("meta-llama/Llama-3.1-8B") == "llama3"
+        assert chulengo.detect_model_family("meta-llama/Llama-3.2-3B") == "llama3"
+        assert chulengo.detect_model_family("meta-llama/Llama-3.3-70B") == "llama3"
+        assert chulengo.detect_model_family("Qwen/Qwen35-72B") == "qwen35"
+        assert chulengo.detect_model_family("meta-llama/Llama31-8B") == "llama3_1"
+
+    def test_specific_families_not_shadowed_by_prefix(self):
+        """More specific families must beat their prefixes: mistral3 before
+        mistral, granitemoeshared before granitemoe, qwencoder before qwen."""
+        assert chulengo.detect_model_family("mistralai/Mistral-3-Base") == "mistral3"
+        assert chulengo.detect_model_family("mistralai/Mistral4-XL") == "mistral4"
+        assert (
+            chulengo.detect_model_family("ibm/GraniteMoE-Shared-3.8b")
+            == "granitemoeshared"
+        )
+        assert chulengo.detect_model_family("Qwen/QwenCoder-7B") == "qwencoder"
+
+    def test_every_family_resolves_to_itself(self):
+        """Every shipped family must resolve to itself by name, i.e. no family
+        is shadowed by a shorter prefix family in KNOWN_FAMILIES order."""
+        for family in chulengo.KNOWN_FAMILIES:
+            assert chulengo.detect_model_family(family + "-test") == family, family
+
+    def test_sample_model_families(self, sample_model_families):
+        """Real HF-style names resolve to their expected name-only family."""
+        for name, expected in sample_model_families.items():
+            assert chulengo.detect_model_family(name) == expected, name
+
+    def test_models_yaml_order_matches_known_families(self):
+        """The shipped defaults: blocks stay in KNOWN_FAMILIES order, so a
+        reordering in one place without the other is caught."""
+        with open(chulengo.DEFAULT_SETTINGS_FILE) as f:
+            shipped = yaml.safe_load(f)["defaults"]
+        assert [k for k in shipped if k != "generic"] == chulengo.KNOWN_FAMILIES
+
 
 class TestGetDefaultSettings:
     """Tests for get_default_settings() function."""
@@ -505,6 +545,98 @@ class TestResolveModelFamily:
 
         # Without the user block, name detection would land on `llama`.
         assert resolution.settings["ctx_size"] == 65536
+
+    # Settings for the shared `llama` architecture: several shipped families
+    # map onto it, so a cached GGUF must be narrowed by model name.
+    LLAMA_SHARED = {
+        "defaults": {
+            "llama": {"ctx_size": 4096, "flash_attn": "off"},
+            "llama3": {"ctx_size": 8192},
+            "llama3_1": {"ctx_size": 8192, "cache_type_k": "q8_0"},
+            "llama3_2": {"ctx_size": 8192},
+            "mistral": {"ctx_size": 8192},
+            "mixtral": {"ctx_size": 32768},
+            "codestral": {"ctx_size": 32768},
+            "generic": {"ctx_size": 4096},
+        },
+        "model_overrides": {},
+    }
+
+    def test_llama_arch_picks_most_specific_family(self, mocker):
+        """A cached llama-arch 'Llama-3.1-8B' resolves to llama3_1 (most
+        specific), not the plain llama block, with no warning."""
+        resolution = self._resolve(
+            "meta-llama/Llama-3.1-8B", mocker, arch="llama", settings=self.LLAMA_SHARED
+        )
+
+        assert resolution.warnings == []
+        assert resolution.settings["ctx_size"] == 8192
+        assert resolution.settings["cache_type_k"] == "q8_0"  # llama3_1 block
+        assert resolution.family == "llama3_1"
+        assert resolution.source == "architecture-name"
+
+    def test_llama_arch_resolves_llama_family(self, mocker):
+        """Cached llama-arch Llama-3 and Llama-2 resolve to llama3 and the
+        base llama block respectively."""
+        r3 = self._resolve(
+            "meta-llama/Llama-3-8B", mocker, arch="llama", settings=self.LLAMA_SHARED
+        )
+        assert r3.family == "llama3"
+        assert r3.warnings == []
+
+        r2 = self._resolve(
+            "meta-llama/Llama-2-7B", mocker, arch="llama", settings=self.LLAMA_SHARED
+        )
+        assert r2.family == "llama"
+
+    def test_llama_arch_resolves_mistral_mixtral_codestral(self, mocker):
+        """Mistral, Mixtral and Codestral share the llama arch and must land
+        on their own shipped blocks, not the plain llama one."""
+        pairs = [
+            ("mistralai/Mistral-7B-Instruct-v0.3", "mistral"),
+            ("mistralai/Mixtral-8x7B-Instruct-v7.1", "mixtral"),
+            ("codestral/codestral-22b-v0.1", "codestral"),
+            # The "mistralai" org must not pull Codestral onto the mistral block.
+            ("mistralai/Codestral-22B-v0.1", "codestral"),
+        ]
+        for name, expected in pairs:
+            resolution = self._resolve(
+                name, mocker, arch="llama", settings=self.LLAMA_SHARED
+            )
+            assert resolution.family == expected, name
+            assert resolution.warnings == [], name
+
+    def test_llama_arch_falls_back_to_base_block(self, mocker):
+        """An unrelated llama-arch name still gets the base llama block."""
+        resolution = self._resolve(
+            "some/unknown-model", mocker, arch="llama", settings=self.LLAMA_SHARED
+        )
+        assert resolution.family == "llama"
+        assert resolution.settings["ctx_size"] == 4096
+
+    def test_mistral3_and_mistral4_are_their_own_arches(self, mocker):
+        """mistral3/mistral4 are separate GGUF architectures, so a cached
+        Mistral-Small-3.1 resolves to the mistral3 block directly and must NOT
+        fall onto the plain mistral block through the llama table."""
+        settings = {
+            "defaults": {
+                "mistral3": {"ctx_size": 16384},
+                "mistral": {"ctx_size": 8192},
+                "llama": {"ctx_size": 4096},
+                "generic": {"ctx_size": 2048},
+            },
+            "model_overrides": {},
+        }
+        resolution = self._resolve(
+            "mistralai/Mistral-Small-3.1-24B",
+            mocker,
+            arch="mistral3",
+            settings=settings,
+        )
+
+        assert resolution.family == "mistral3"
+        assert resolution.settings["ctx_size"] == 16384
+        assert resolution.source == "architecture"
 
 
 class TestBuildLlamaCommand:
@@ -879,6 +1011,72 @@ class TestCmdShow:
         assert "Detected family: plamo" in captured.out
         assert "Default settings for plamo" in captured.out
         assert captured.err == ""
+
+    def test_show_reports_family_from_gguf_architecture(self, mocker, capsys):
+        """show says the family came from the GGUF architecture when the arch
+        picks the block directly."""
+        mock_args = MagicMock()
+        mock_args.model = "Qwen/Qwen3-8B"
+
+        cache_info = {
+            "cache_dir": "/cache/Qwen/Qwen3-8B",
+            "snapshot": "/cache/Qwen/Qwen3-8B/snapshots/123",
+            "gguf_files": ["model.gguf"],
+            "gguf_path": "/cache/Qwen/Qwen3-8B/model.gguf",
+        }
+
+        settings = {
+            "defaults": {
+                "qwen3": {"ctx_size": 16384},
+                "generic": {"ctx_size": 4096},
+            },
+            "model_overrides": {},
+        }
+
+        with patch("chulengo.load_settings", return_value=settings):
+            with patch("chulengo.get_model_cache_info", return_value=cache_info):
+                with patch("chulengo.get_gguf_architecture", return_value="qwen3"):
+                    with patch("chulengo.extract_gguf_metadata", return_value=None):
+                        result = chulengo.cmd_show(mock_args)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Detected family: qwen3" in captured.out
+        assert "GGUF architecture 'qwen3'" in captured.out
+
+    def test_show_shows_same_resolved_settings_as_serve(self, mocker, capsys):
+        """show displays the block resolve_model_family picks (a llama-arch
+        model narrows to llama3_1), so show and serve cannot diverge."""
+        mock_args = MagicMock()
+        mock_args.model = "meta-llama/Llama-3.1-8B"
+
+        cache_info = {
+            "cache_dir": "/cache/meta-llama/Llama-3.1-8B",
+            "snapshot": "/cache/meta-llama/Llama-3.1-8B/snapshots/123",
+            "gguf_files": ["model.gguf"],
+            "gguf_path": "/cache/meta-llama/Llama-3.1-8B/model.gguf",
+        }
+
+        settings = {
+            "defaults": {
+                "llama": {"ctx_size": 4096},
+                "llama3_1": {"ctx_size": 8192, "cache_type_k": "q8_0"},
+                "generic": {"ctx_size": 4096},
+            },
+            "model_overrides": {},
+        }
+
+        with patch("chulengo.load_settings", return_value=settings):
+            with patch("chulengo.get_model_cache_info", return_value=cache_info):
+                with patch("chulengo.get_gguf_architecture", return_value="llama"):
+                    with patch("chulengo.extract_gguf_metadata", return_value=None):
+                        result = chulengo.cmd_show(mock_args)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Detected family: llama3_1" in captured.out
+        assert "Default settings for llama3_1" in captured.out
+        assert "GGUF 'llama' architecture, picked by model name" in captured.out
 
 
 class TestGetModelCacheInfo:
@@ -1387,6 +1585,26 @@ class TestDoctorConfig:
 
         assert not any("'plamo'" in i or "'gpt-oss'" in i for i in issues)
         assert any("Unknown family 'gemmma'" in i for i in issues)
+
+    def test_duplicate_spelling_blocks_are_flagged(self):
+        """A user `gpt-oss:` block next to the shipped `gpt_oss:` is flagged
+        even though both keys are individually valid keys."""
+        settings = {
+            "defaults": {
+                "gpt_oss": {"ctx_size": 131072},
+                "gpt-oss": {"ctx_size": 131072},
+                "qwen3": {"ctx_size": 16384},
+            },
+            "model_overrides": {},
+        }
+        issues = chulengo.doctor_config(settings)
+
+        assert any(
+            "duplicate spelling" in i and "gpt_oss" in i and "gpt-oss" in i
+            for i in issues
+        )
+        # Neither key is itself unknown.
+        assert not any("Unknown family" in i for i in issues)
 
     def test_unknown_setting_key_is_flagged(self, mocker):
         """A setting key that isn't recognised should be reported."""
