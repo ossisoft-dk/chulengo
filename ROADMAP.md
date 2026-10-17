@@ -6,6 +6,11 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
 
 ## Next (near-term)
 
+- **Security hardening** (from the security review), in descending order of importance
+  - Sanitize GGUF-derived strings before printing — `show` renders `general.description`/name/basename/finetune/author and tokenizer strings raw, and `serve` prints the GGUF architecture in its resolution warning, so a crafted GGUF can inject terminal escape sequences (clear-screen, title/color spoofing, OSC-52 clipboard). Strip ESC/C0/C1 control chars centrally and reuse it in both paths.
+  - Reject unknown YAML tags in config loading — ruamel.yaml's round-trip loader silently downgrades `!!python/object/apply`-style tags to plain values instead of erroring; a stricter constructor would surface a corrupted or hostile config (via `--config`/`CHULENGO_CONFIG`) rather than quietly reinterpreting it.
+  - Keep GGUF parsing on untrusted input fail-fast — crafted cached GGUFs verified to fail quickly today; keep `gguf` current and add a lint guard (ruff `S` rules) so future edits can't reintroduce shell execution at the subprocess boundary.
+  - Belt-and-suspenders on network exposure — warn on stderr when `serve --bind` targets a non-loopback address (llama has no auth), on top of the documented note.
 - **Serving**
   - `--bind` passthrough and a clear note about the default network exposure
     of `llama serve`
