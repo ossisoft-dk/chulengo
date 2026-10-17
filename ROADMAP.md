@@ -23,6 +23,11 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
     OK/FAIL** probe) so `-mg`/`-ts` values are discoverable and a broken
     or mismatched card is visible at a glance instead of a raw HIP
     stacktrace
+- **Config visibility**
+  - Show the stored `alias` in `chulengo ls` output. `chulengo show` already
+    displays the stored alias (under the model's custom settings), but `ls`
+    reads only the HF cache and never consults the config, so the only way
+    to see an alias there is to read the config file
 
 ## Later (ideas, not committed)
 
