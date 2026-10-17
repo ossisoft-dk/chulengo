@@ -1029,6 +1029,7 @@ def _is_on(value: Any) -> bool:
 def build_llama_command(
     model_name: str,
     port: int | None = None,
+    bind: str | None = None,
     extra_args: list[str] | None = None,
     alias: str | None = None,
     family_resolution: FamilyResolution | None = None,
@@ -1053,6 +1054,11 @@ def build_llama_command(
     # Add port if specified
     if port:
         cmd.extend(["--port", str(port)])
+
+    # Add host to bind to, if specified; passed through as llama --host
+    # (defaults to 127.0.0.1 otherwise, i.e. localhost only).
+    if bind:
+        cmd.extend(["--host", bind])
 
     # Resolve user overrides once; the stored alias lives here. A CLI --alias
     # wins over the alias saved by create/update.
@@ -1299,6 +1305,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     cmd = build_llama_command(
         model_name=model_name,
         port=args.port,
+        bind=args.bind,
         alias=args.alias,
         family_resolution=resolution,
         # Override arguments
@@ -1499,6 +1506,16 @@ def main() -> int:
     serve_parser.add_argument("model", help="Model name to serve")
     serve_parser.add_argument(
         "--port", "-p", type=int, default=11853, help="Port to serve on"
+    )
+    serve_parser.add_argument(
+        "--bind",
+        metavar="HOST",
+        help=(
+            "Host/IP to bind the server to (passed to llama as --host). "
+            "Defaults to 127.0.0.1 (localhost only); use 0.0.0.0 to expose "
+            "the server to the whole network. Note the API has no built-in "
+            "authentication, so do not expose it untrusted."
+        ),
     )
     serve_parser.add_argument("--alias", "-a", help="Alias for the model")
     # Override flags

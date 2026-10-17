@@ -159,6 +159,14 @@ chulengo serve Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M --port 8001
 
 By default, Chulengo serves on port **11853**. You can specify a different port with the `--port` or `-p` flag.
 
+By default the server binds to **localhost only** (`127.0.0.1`), so other machines on your network cannot reach it. Bind to a specific interface with `--bind` (passed to llama as `--host`):
+
+```bash
+chulengo serve Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M --bind 0.0.0.0
+```
+
+> **Security note:** `llama serve` has no built-in authentication. Exposing it on `0.0.0.0` or a LAN interface lets anyone who can reach that port send requests and trigger model loads — only do that behind a reverse proxy, firewall, or VPN that authenticates.
+
 Override settings from command line:
 
 ```bash

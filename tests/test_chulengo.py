@@ -1496,6 +1496,25 @@ class TestBuildLlamaCommandAdditional:
         assert "--ctx-size" not in result
         assert "--flash-attn" not in result
 
+    def test_includes_host_when_bind_given(self, mocker):
+        """--bind is passed through to llama as --host; absent by default."""
+        settings = {"defaults": {}, "model_overrides": {}}
+
+        with patch("chulengo.load_settings", return_value=settings):
+            with patch("chulengo.detect_model_family", return_value=None):
+                with patch(
+                    "chulengo.get_default_settings",
+                    return_value={"ctx_size": 8192},
+                ):
+                    with_host = chulengo.build_llama_command(
+                        "test/model", bind="0.0.0.0"
+                    )
+                    without_host = chulengo.build_llama_command("test/model")
+
+        assert "--host" in with_host
+        assert with_host[with_host.index("--host") + 1] == "0.0.0.0"
+        assert "--host" not in without_host
+
 
 class TestModelFamilyCoverage:
     """Tests covering all model families from models.yaml."""
@@ -1839,6 +1858,7 @@ class TestAliases:
         base = dict(
             model=None,
             port=None,
+            bind=None,
             alias=None,
             ctx_size=None,
             flash_attn=None,
