@@ -9,6 +9,7 @@ by applying sensible defaults based on model family.
 import argparse
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -1313,12 +1314,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         # Print the exact command that would run (all defaults and overrides
-        # resolved) without executing it.
+        # resolved) without executing it. shlex.join quotes any argument with
+        # spaces or shell characters, so the line can be copied and run.
         print("Dry run — not executing:")
-        print(f"  {' '.join(cmd)}")
+        print(f"  {shlex.join(cmd)}")
         return 0
 
-    print(f"Running: {' '.join(cmd)}")
+    print(f"Running: {shlex.join(cmd)}")
 
     # Execute the command
     try:

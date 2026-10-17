@@ -2050,6 +2050,37 @@ class TestAliases:
         assert "Running:" not in captured.out
         popen.assert_not_called()
 
+    def test_serve_dry_run_quotes_arguments_with_spaces(self, mocker, capsys):
+        """Arguments containing spaces are shlex-quoted so the printed command
+        can be copied and run as-is."""
+        settings = {"defaults": {}, "model_overrides": {}}
+        mocker.patch.object(chulengo, "load_settings", return_value=settings)
+        mocker.patch.object(
+            chulengo,
+            "resolve_model_family",
+            return_value=chulengo.FamilyResolution({}, []),
+        )
+        cmd = [
+            "llama",
+            "serve",
+            "--hf-repo",
+            "org/repo",
+            "--chat-template-file",
+            "/tmp/my template.jinja",
+        ]
+        mocker.patch.object(chulengo, "build_llama_command", return_value=cmd)
+        popen = mocker.patch("chulengo.subprocess.Popen")
+
+        ns = self._ns(model="org/repo", dry_run=True)
+
+        assert chulengo.cmd_serve(ns) == 0
+        captured = capsys.readouterr()
+        # The printed line is the shlex-joined form and the spacey argument is
+        # single-quoted, not split.
+        assert chulengo.shlex.join(cmd) in captured.out
+        assert "'/tmp/my template.jinja'" in captured.out
+        popen.assert_not_called()
+
     # --- doctor ----------------------------------------------------------
 
     def test_doctor_flags_slash_alias(self):

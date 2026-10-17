@@ -11,7 +11,6 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
     of `llama serve`
   - `chulengo status` / `stop`: track the pid of a served model and stop it
     cleanly instead of relying on Ctrl+C in the original terminal
-  - `--dry-run` flag: print the exact command without executing it
 - **Multi-GPU support** (GPU selection is currently fully implicit —
   llama.cpp's defaults decide, which on multi-GPU boxes can place layers on
   a device you don't want, e.g. an iGPU)

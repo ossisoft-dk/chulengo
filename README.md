@@ -167,6 +167,16 @@ chulengo serve Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M \
   --reasoning off
 ```
 
+See the exact command that `serve` would run (family defaults and overrides
+all resolved) without executing it:
+
+```bash
+chulengo serve Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M --dry-run
+```
+
+`--dry-run` prints the full `llama serve` command, shell-quoted so it can be
+copied and run as-is, then exits without launching anything.
+
 ## Model Aliases
 
 Give a long repo name a short handle so you can serve it without typing the
