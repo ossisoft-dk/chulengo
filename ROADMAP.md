@@ -32,13 +32,18 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
     reads only the HF cache and never consults the config, so the only way
     to see an alias there is to read the config file
 
+- **Tool hygiene**
+  - `--version` flag: display the installed version from pyproject.toml
+  - `chulengo doctor` env checks: verify `llama` is on PATH, report version
+
 ## Later (ideas, not committed)
 
 - Custom family names that aren't GGUF architectures (e.g. `devstral` running on `mistral3`), via an optional `families:` section linking a name to an arch
 - Multi-model serving profiles (one config entry → several replicas/aliases)
+- `chulengo ping`: chat completions smoke test against a running server (ties into status/stop work)
 - `chulengo bench`: wrapper around llama-bench with saved per-model results
+- `chulengo gpus`: detailed GPU listing for multi-GPU selection (relates to Multi-GPU support in Next)
 - Model download progress/mirror passthrough (`llama download`)
-- Chat completions smoke test (`chulengo ping`) against a running server
 - Windows and non-XDG config locations (follow platformdirs)
 - Packaging as a standalone binary (e.g. via uv/pipx tool install) with
   llama.cpp auto-discovery
