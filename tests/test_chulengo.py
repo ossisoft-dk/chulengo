@@ -465,6 +465,18 @@ class TestResolveModelFamily:
         )
         assert resolution.settings["ctx_size"] == 4096
 
+    def test_crafted_arch_warning_is_sanitized(self, mocker):
+        """An architecture string from a crafted GGUF cannot inject terminal
+        control sequences into the resolution warning serve prints."""
+        resolution = self._resolve("Qwen/Qwen3-8B", mocker, arch="plamo\x1b]0;evil\x07")
+
+        assert len(resolution.warnings) == 1
+        assert "\x1b" not in resolution.warnings[0]
+        assert "\x07" not in resolution.warnings[0]
+        # The printable text survives so the warning stays understandable.
+        assert "plamo" in resolution.warnings[0]
+        assert resolution.settings["ctx_size"] == 16384
+
     def test_unreadable_arch_warns_with_name_fallback(self, mocker):
         """An unreadable cached GGUF warns and names the fallback source."""
         resolution = self._resolve("Qwen/Qwen3-8B", mocker, arch=None)
@@ -930,6 +942,53 @@ class TestCmdShow:
         assert "qwen3" in captured.out
         assert "8.0B" in captured.out
 
+    def test_show_sanitizes_gguf_control_characters(self, capsys):
+        """A crafted GGUF whose metadata embeds ESC/C0 controls must not reach
+        the terminal: show strips them from architecture, name/finetune/
+        basename/description and tokenizer strings."""
+        mock_args = MagicMock()
+        mock_args.model = "evil/gguf"
+
+        cache_info = {
+            "cache_dir": "/cache/evil/gguf",
+            "snapshot": "/cache/evil/gguf/snapshots/123",
+            "gguf_files": ["model.gguf"],
+            "gguf_path": "/cache/evil/gguf/model.gguf",
+        }
+
+        crafted = "\x1b]0;evil title\x07"
+        gguf_metadata = {
+            "architecture": crafted,
+            "parameter_count_formatted": "8.0B",
+            "tokenizer_model": crafted,
+            "tokenizer_pre": crafted,
+            "general_name": crafted,
+            "general_finetune": crafted,
+            "general_basename": crafted,
+            "general_description": crafted + ("A" * 100),
+        }
+
+        with patch(
+            "chulengo.load_settings",
+            return_value={"defaults": {}, "model_overrides": {}},
+        ):
+            with patch("chulengo.detect_model_family", return_value=None):
+                with patch("chulengo.get_model_cache_info", return_value=cache_info):
+                    with patch(
+                        "chulengo.extract_gguf_metadata", return_value=gguf_metadata
+                    ):
+                        result = chulengo.cmd_show(mock_args)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        out = captured.out
+        # Escape and BEL must never reach stdout.
+        assert "\x1b" not in out
+        assert "\x07" not in out
+        # The printable payload still displays, sanitized.
+        assert "evil title" in out
+        assert "8.0B" in out
+
     def test_shows_warning_for_nonexistent_model(self, mocker, capsys):
         """Test showing warning when model not in cache."""
         mock_args = MagicMock()
@@ -1275,6 +1334,40 @@ class TestExtractGgufMetadata:
             result = chulengo.extract_gguf_metadata("/path/to/model.gguf")
 
         assert result is None
+
+
+class TestSanitizeOutput:
+    """Tests for _sanitize_output() terminal-control stripping."""
+
+    def test_keeps_plain_text(self):
+        assert chulengo._sanitize_output("Qwen3-8B") == "Qwen3-8B"
+
+    def test_keeps_unicode_and_high_bytes(self):
+        assert chulengo._sanitize_output("ñño 東京żż") == "ñño 東京żż"
+
+    def test_strips_esc_and_c0_controls(self):
+        crafted = "\x1b]0;evil title\x07"
+        assert "\x1b" not in chulengo._sanitize_output(crafted)
+        assert "\x07" not in chulengo._sanitize_output(crafted)
+        assert "evil title" in chulengo._sanitize_output(crafted)
+        # C0 NUL..US all removed by range check, including tab/newline.
+        for ch in "\x00\x01\t\n\x1f":
+            assert ch not in chulengo._sanitize_output("a" + ch + "b")
+
+    def test_strips_del_and_c1_controls(self):
+        assert "\x7f" not in chulengo._sanitize_output("a\x7fb")
+        # C1 range 0x80-0x9F (e.g. NEL U+0085, SOS U+0098).
+        for ch in ["\u0085", "\u0098", "\u009b"]:
+            assert ch not in chulengo._sanitize_output("a" + ch + "b")
+
+    def test_non_string_values_are_coerced(self):
+        assert chulengo._sanitize_output(123) == "123"
+
+    def test_csi_sequence_cannot_survive_intervening_chars(self):
+        """ESC that starts a CSI/OSC sequence is removed, so the rest is inert."""
+        sequence = "\x1b[2J"  # clear screen
+        assert "[2J" in chulengo._sanitize_output(sequence)
+        assert "\x1b" not in chulengo._sanitize_output(sequence)
 
 
 class TestIntegration:
@@ -2180,6 +2273,18 @@ class TestServeFamilyWarnings:
         assert "could not read the architecture from the cached GGUF" in captured.err
         assert "using qwen3 defaults from the model name" in captured.err
         assert "Running: llama serve" in captured.out
+        assert cmd[cmd.index("--ctx-size") + 1] == "16384"
+
+    def test_serve_sanitizes_crafted_arch_warning(self, mocker, capsys):
+        """An architecture string from a crafted GGUF cannot inject terminal
+        control sequences into serve's stderr warning."""
+        cmd = self._serve(mocker, "Qwen/Qwen3-8B", arch="plamo\x1b]0;evil\x07")
+
+        captured = capsys.readouterr()
+        assert "\x1b" not in captured.err
+        assert "\x07" not in captured.err
+        assert "architecture 'plamo" in captured.err
+        # Name fallback still picked qwen3.
         assert cmd[cmd.index("--ctx-size") + 1] == "16384"
 
     def test_serve_hyphenated_arch_uses_gpt_oss_block(self, mocker, capsys):

@@ -160,6 +160,20 @@ def set_settings_file(cli_path: str | None = None) -> Path:
     return SETTINGS_FILE
 
 
+def _sanitize_output(value: Any) -> str:
+    """Strip terminal control characters from untrusted text (e.g. GGUF strings).
+
+    A crafted GGUF can embed ESC, C0/C1 control characters, or OSC sequences
+    that a terminal interprets as actions (clear-screen, title/color spoofing,
+    OSC-52 clipboard writes). Strip them centrally and reuse the result in
+    `show` and in `serve`'s resolution warning so no control byte reaches the
+    terminal.
+    """
+    text = str(value)
+    # C0 (0x00-0x1F, including ESC 0x1B), DEL (0x7F) and C1 (0x80-0x9F).
+    return "".join(ch for ch in text if not (ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F))
+
+
 def load_settings() -> dict:
     """Load settings from user config, falling back to package defaults.
 
@@ -489,6 +503,10 @@ def resolve_model_family(model_name: str) -> FamilyResolution:
     if cache_info and cache_info.get("gguf_path"):
         gguf_architecture = get_gguf_architecture(Path(cache_info["gguf_path"]))
         if gguf_architecture:
+            # The architecture string is GGUF-derived and could carry terminal
+            # control sequences; strip them before they can reach a warning
+            # message or a source phrase.
+            gguf_architecture = _sanitize_output(gguf_architecture)
             # Shared arch (llama): the architecture alone names several
             # blocks, so narrow it to the most specific family by model name.
             if gguf_architecture == "llama":
@@ -893,9 +911,13 @@ def cmd_show(args: argparse.Namespace) -> int:
         metadata = extract_gguf_metadata(Path(cache_info["gguf_path"]))
         if metadata:
             print("\nGGUF Metadata:")
-            print(f"  Architecture: {metadata.get('architecture', 'unknown')}")
             print(
-                f"  Parameters: {metadata.get('parameter_count_formatted', 'unknown')}"
+                "  Architecture: "
+                f"{_sanitize_output(metadata.get('architecture', 'unknown'))}"
+            )
+            print(
+                "  Parameters: "
+                f"{_sanitize_output(metadata.get('parameter_count_formatted', 'unknown'))}"
             )
 
             # Show multimodal capabilities
@@ -950,13 +972,21 @@ def cmd_show(args: argparse.Namespace) -> int:
             # Show tokenizer info
             tokenizer_info = []
             if "tokenizer_model" in metadata:
-                tokenizer_info.append(f"  Model: {metadata['tokenizer_model']}")
+                tokenizer_info.append(
+                    f"  Model: {_sanitize_output(metadata['tokenizer_model'])}"
+                )
             if "tokenizer_pre" in metadata:
-                tokenizer_info.append(f"  Pre: {metadata['tokenizer_pre']}")
+                tokenizer_info.append(
+                    f"  Pre: {_sanitize_output(metadata['tokenizer_pre'])}"
+                )
             if "tokenizer_bos_id" in metadata:
-                tokenizer_info.append(f"  BOS token ID: {metadata['tokenizer_bos_id']}")
+                tokenizer_info.append(
+                    f"  BOS token ID: {_sanitize_output(metadata['tokenizer_bos_id'])}"
+                )
             if "tokenizer_eos_id" in metadata:
-                tokenizer_info.append(f"  EOS token ID: {metadata['tokenizer_eos_id']}")
+                tokenizer_info.append(
+                    f"  EOS token ID: {_sanitize_output(metadata['tokenizer_eos_id'])}"
+                )
 
             if tokenizer_info:
                 print("\n  Tokenizer:")
@@ -966,13 +996,19 @@ def cmd_show(args: argparse.Namespace) -> int:
             # Show general metadata if available
             general_info = []
             if metadata.get("general_name"):
-                general_info.append(f"  Name: {metadata['general_name']}")
+                general_info.append(
+                    f"  Name: {_sanitize_output(metadata['general_name'])}"
+                )
             if metadata.get("general_finetune"):
-                general_info.append(f"  Finetune: {metadata['general_finetune']}")
+                general_info.append(
+                    f"  Finetune: {_sanitize_output(metadata['general_finetune'])}"
+                )
             if metadata.get("general_basename"):
-                general_info.append(f"  Base model: {metadata['general_basename']}")
+                general_info.append(
+                    f"  Base model: {_sanitize_output(metadata['general_basename'])}"
+                )
             if metadata.get("general_description"):
-                desc = metadata["general_description"]
+                desc = _sanitize_output(metadata["general_description"])
                 if len(desc) > 100:
                     desc = desc[:100] + "..."
                 general_info.append(f"  Description: {desc}")
