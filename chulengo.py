@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import ruamel.yaml
+from ruamel.yaml.constructor import ConstructorError, RoundTripConstructor
 from gguf import GGUFReader
 from gguf.constants import MODEL_ARCH_NAMES
 from gguf.utility import model_weight_count_rounded_notation
@@ -174,6 +175,48 @@ def _sanitize_output(value: Any) -> str:
     return "".join(ch for ch in text if not (ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F))
 
 
+class _StrictYAMLConstructor(RoundTripConstructor):
+    """Round-trip constructor that rejects unknown YAML tags.
+
+    The base round-trip loader quietly downgrades unregistered tags -- a
+    hostile ``!!python/object/apply:...`` becomes a plain list -- or preserves
+    them as inert TaggedScalar/CommentedMap nodes, so a corrupted or hostile
+    ``--config`` / ``CHULENGO_CONFIG`` file is silently reinterpreted instead of
+    flagged. Re-pointing the unknown-tag fallback makes any such tag fail fast
+    at load time with a clear message.
+    """
+
+    def construct_unknown(self, node: Any) -> Any:
+        raise ConstructorError(
+            None,
+            None,
+            f"unsupported YAML tag {node.tag!r} in config; chulengo accepts only "
+            "standard YAML data (maps, sequences, scalars)",
+            node.start_mark,
+        )
+
+
+# yaml_constructors stores a direct function reference, so re-pointing the
+# ``None`` (unknown-tag) fallback must patch the entry, not just the method.
+_StrictYAMLConstructor.yaml_constructors = {**RoundTripConstructor.yaml_constructors}
+_StrictYAMLConstructor.yaml_constructors[None] = (
+    _StrictYAMLConstructor.construct_unknown
+)
+
+
+def _config_yaml() -> ruamel.yaml.YAML:
+    """Build the round-trip YAML instance used for the config file.
+
+    Uses the strict constructor above so unknown tags surface as errors, and
+    preserves quotes/comments via ``preserve_quotes`` (used for both load and
+    dump; dump never consults the constructor).
+    """
+    yaml = ruamel.yaml.YAML()
+    yaml.preserve_quotes = True
+    yaml.Constructor = _StrictYAMLConstructor
+    return yaml
+
+
 def load_settings() -> dict:
     """Load settings from user config, falling back to package defaults.
 
@@ -182,8 +225,7 @@ def load_settings() -> dict:
     """
     # If user config exists, use it with round-trip loader to preserve comments
     if SETTINGS_FILE.exists():
-        yaml = ruamel.yaml.YAML()
-        yaml.preserve_quotes = True
+        yaml = _config_yaml()
         with open(SETTINGS_FILE) as f:
             settings = yaml.load(f) or {}
         return settings
@@ -199,8 +241,7 @@ def load_settings() -> dict:
     for source in sources:
         if source.exists():
             try:
-                yaml = ruamel.yaml.YAML()
-                yaml.preserve_quotes = True
+                yaml = _config_yaml()
                 with open(source) as f:
                     settings = yaml.load(f) or {
                         "defaults": {},
@@ -241,8 +282,7 @@ def save_settings(settings: dict) -> None:
         delete=False,
     )
     try:
-        yaml = ruamel.yaml.YAML()
-        yaml.preserve_quotes = True
+        yaml = _config_yaml()
         # Use round-trip dumper to preserve comments and formatting
         yaml.dump(settings, tmp)
         tmp.flush()
@@ -1405,8 +1445,7 @@ def load_user_config() -> tuple[dict | None, str | None]:
     if not SETTINGS_FILE.exists():
         return None, None
 
-    yaml = ruamel.yaml.YAML()
-    yaml.preserve_quotes = True
+    yaml = _config_yaml()
     try:
         with open(SETTINGS_FILE) as f:
             return yaml.load(f) or {}, None
@@ -1587,7 +1626,17 @@ def main() -> int:
 
     args = parser.parse_args()
     set_settings_file(getattr(args, "config", None))
-    return args.func(args)
+    try:
+        return args.func(args)
+    except Exception as e:
+        # A corrupted or hostile config (or any unexpected runtime failure)
+        # must surface as a clean one-line error, not a raw traceback. YAML
+        # errors already carry file/line context; collapse their embedded
+        # newlines into a single line. BaseException (KeyboardInterrupt etc.)
+        # is deliberately left alone.
+        message = re.sub(r"\s+", " ", str(e)).strip()
+        print(f"Error: {message}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

@@ -123,6 +123,135 @@ class TestSaveSettings:
         assert [p.name for p in tmp_path.iterdir()] == []
 
 
+class TestStrictYamlTags:
+    """Unknown YAML tags must fail fast instead of being silently downgraded.
+
+    The base ruamel round-trip loader turns a hostile ``!!python/object/apply``
+    (or any unregistered tag) into a plain value. The strict constructor makes
+    the config load raise, so a corrupted or hostile --config / CHULENGO_CONFIG
+    file is surfaced rather than quietly reinterpreted.
+    """
+
+    HOSTILE = (
+        'defaults: !!python/object/apply:os.system ["touch /tmp/pwned"]\n'
+        "model_overrides: {}\n"
+    )
+
+    def test_unknown_tag_raises_from_load_settings(self, mocker, tmp_path):
+        """A hostile python tag must raise, not load as harmless plain data."""
+        target = tmp_path / "models.yaml"
+        target.write_text(self.HOSTILE)
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
+
+        with pytest.raises(chulengo.ConstructorError, match="unsupported YAML tag"):
+            chulengo.load_settings()
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            'a: !!python/object/apply:os.system ["touch x"]\n',
+            "a: !!python/name:os.system\n",
+            "a: !!bogus 1\n",
+            "a: !local_tag val\n",
+        ],
+    )
+    def test_any_unknown_tag_rejected(self, mocker, tmp_path, bad):
+        """python/name as well as arbitrary unknown tags are all rejected."""
+        target = tmp_path / "models.yaml"
+        target.write_text(bad)
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
+
+        settings, error = chulengo.load_user_config()
+
+        assert settings is None
+        assert error is not None
+        assert "Could not parse config file" in error
+        assert "unsupported YAML tag" in error
+
+    def test_doctor_reports_unknown_tag(self, mocker, tmp_path, capsys):
+        """chulengo doctor surfaces the tag as an issue, not a traceback."""
+        target = tmp_path / "models.yaml"
+        target.write_text(self.HOSTILE)
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
+
+        rc = chulengo.cmd_doctor(None)
+
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "Could not parse config file" in out
+        assert "python/object/apply" in out
+
+    def test_standard_tags_and_merge_keys_still_load(self, mocker, tmp_path):
+        """Plain configs (quotes, ints, anchors, merge keys) still round-trip."""
+        target = tmp_path / "models.yaml"
+        target.write_text(
+            "defaults:\n"
+            "  generic:\n"
+            "    ctx_size: 4096\n"
+            '    flash_attn: "on"\n'
+            "base: &b\n"
+            "  ctx_size: 16384\n"
+            "model_overrides:\n"
+            "  m:\n"
+            "    <<: *b\n"
+        )
+        mocker.patch.object(chulengo, "SETTINGS_FILE", target)
+
+        settings = chulengo.load_settings()
+
+        assert settings["defaults"]["generic"]["ctx_size"] == 4096
+        # merge keys and quoted scalars survive the strict load
+        assert settings["model_overrides"]["m"]["ctx_size"] == 16384
+        assert settings["defaults"]["generic"]["flash_attn"] == "on"
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            # hostile tag from the security pass
+            'defaults: !!python/object/apply:os.system ["touch /tmp/pwned"]\n',
+            # plain malformed YAML
+            "defaults: [unclosed\n",
+        ],
+    )
+    def test_command_prints_clean_error_not_traceback(
+        self, mocker, tmp_path, capsys, content
+    ):
+        """Any config load failure surfaces as one clean Error line, not a
+        traceback, when a real command runs through main()."""
+        target = tmp_path / "models.yaml"
+        target.write_text(content + "model_overrides: {}\n")
+        mocker.patch.object(
+            sys, "argv", ["chulengo", "--config", str(target), "show", "m"]
+        )
+
+        rc = chulengo.main()
+
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert captured.err.startswith("Error: ")
+        assert "Traceback" not in captured.err
+        assert "Traceback" not in captured.out
+
+    def test_command_reports_hostile_tag_name(self, mocker, tmp_path, capsys):
+        """The clean error names the offending tag so it is actionable."""
+        target = tmp_path / "models.yaml"
+        target.write_text(
+            'defaults: !!python/object/apply:os.system ["touch /tmp/pwned"]\n'
+            "model_overrides: {}\n"
+        )
+        mocker.patch.object(
+            sys, "argv", ["chulengo", "--config", str(target), "show", "m"]
+        )
+
+        rc = chulengo.main()
+
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "unsupported YAML tag" in captured.err
+        assert "python/object/apply" in captured.err
+        assert captured.err.count("\n") <= 1
+
+
 class TestGetHfCachePath:
     """Tests for get_hf_cache_path() function."""
 
