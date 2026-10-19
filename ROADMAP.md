@@ -6,9 +6,21 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
 
 ## Next (near-term)
 
-- **Serving**
-  - `chulengo status` / `stop`: track the pid of a served model and stop it
-    cleanly instead of relying on Ctrl+C in the original terminal
+- **Serving lifecycle** — the old `status` / `stop` item, split into small
+  self-contained pieces (each a reviewable PR; roughly in order):
+  - **No orphaned llama**: forward SIGTERM/SIGHUP/SIGQUIT to the served
+    subprocess, wait for a graceful exit, and escalate to SIGKILL after a
+    timeout — mirroring the existing Ctrl+C path. Today a bare
+    `kill <chulengo-pid>` kills the wrapper but leaves llama running.
+  - **Server registry (write)**: `serve` records pid + metadata (model,
+    alias, port, start time, argv) to the state dir and removes the record
+    on clean exit. Foreground behavior otherwise unchanged; no new commands.
+  - **`chulengo status`**: list tracked servers with a liveness check
+    (`os.kill(pid, 0)` plus a pid-reuse guard via `/proc/<pid>/cmdline`),
+    showing model / port / pid / uptime and flagging stale records.
+  - **`chulengo stop`**: cleanly terminate a tracked server (SIGTERM →
+    SIGKILL escalation, reusing the lifecycle helper from the first item)
+    and drop its record; idempotent.
 - **Multi-GPU support** (GPU selection is currently fully implicit —
   llama.cpp's defaults decide, which on multi-GPU boxes can place layers on
   a device you don't want, e.g. an iGPU)
@@ -33,6 +45,11 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
 
 ## Later (ideas, not committed)
 
+- **Daemonized serving**: `serve --background` (or a `start` verb) that
+  spawns llama detached (`start_new_session`), captures output to a log,
+  and returns immediately — so a server outlives the launching terminal
+  and is addressable by `status`/`stop`. Deferred until the lifecycle,
+  registry, and status/stop slices above are in.
 - Custom family names that aren't GGUF architectures (e.g. `devstral` running on `mistral3`), via an optional `families:` section linking a name to an arch
 - Multi-model serving profiles (one config entry → several replicas/aliases)
 - `chulengo ping`: chat completions smoke test against a running server (ties into status/stop work)
