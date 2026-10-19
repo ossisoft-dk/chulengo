@@ -166,6 +166,8 @@ chulengo serve Jackrong/Qwopus3.6-35B-A3B-Coder-MTP-GGUF:Q4_K_M --bind 0.0.0.0
 ```
 
 > **Security note:** `llama serve` has no built-in authentication. Exposing it on `0.0.0.0` or a LAN interface lets anyone who can reach that port send requests and trigger model loads — only do that behind a reverse proxy, firewall, or VPN that authenticates.
+>
+> Binding to a non-loopback address makes `chulengo serve` warn on stderr before launch; a `--bind` value ending in `.sock` is a Unix socket (reachable only by local processes) and triggers no warning.
 
 Override settings from command line:
 

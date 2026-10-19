@@ -7,6 +7,7 @@ by applying sensible defaults based on model family.
 """
 
 import argparse
+import ipaddress
 import os
 import re
 import shlex
@@ -175,6 +176,36 @@ def _sanitize_output(value: Any) -> str:
     return "".join(ch for ch in text if not (ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F))
 
 
+def _is_loopback_host(host: str) -> bool:
+    """True if ``host`` confines the server to the loopback interface.
+
+    llama passes ``--host`` straight through, so ``host`` may be several
+    comma-separated addresses, and a value ending in ``.sock`` is a UNIX
+    domain socket path (reachable only by local processes, never the
+    network). Any part that is not loopback exposes the server.
+
+    The check is deliberately conservative: things it cannot classify —
+    bracketed IPv6 (``[::1]``), a trailing-dot FQDN (``localhost.``), or a
+    bare hostname — count as exposed, so ``serve`` warns rather than
+    silently listening on the network.
+    """
+    return all(_is_loopback_part(part) for part in host.split(","))
+
+
+def _is_loopback_part(host: str) -> bool:
+    host = host.strip()
+    if host.endswith(".sock"):
+        # UNIX socket path (llama's --host detection); never on the network.
+        return True
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        # Not an IP literal (e.g. a bare hostname); be conservative.
+        return False
+
+
 class _StrictYAMLConstructor(RoundTripConstructor):
     """Round-trip constructor that rejects unknown YAML tags.
 
@@ -248,7 +279,7 @@ def load_settings() -> dict:
                         "model_overrides": {},
                     }
                 break
-            except Exception:
+            except Exception:  # noqa: S112 -- corrupt/unparseable; try next source
                 continue
 
     # If no defaults found, create minimal defaults
@@ -332,7 +363,7 @@ def get_gguf_architecture(gguf_path: Path) -> str | None:
         field = reader.get_field("general.architecture")
         if field:
             return field.contents()
-    except Exception:
+    except Exception:  # noqa: S110 -- unreadable GGUF falls back to name detection
         pass
     return None
 
@@ -1377,6 +1408,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
     for warning in resolution.warnings:
         print(f"Warning: {warning}", file=sys.stderr)
 
+    # Belt-and-suspenders: llama's API has no authentication, so make an
+    # exposed bind an explicit, visible choice rather than a silent default.
+    if args.bind and not _is_loopback_host(args.bind):
+        print(
+            f"Warning: --bind {_sanitize_output(args.bind)} is not a loopback address; llama's "
+            "API has no authentication, so the server is reachable by anyone "
+            "who can route to it.",
+            file=sys.stderr,
+        )
+
     # Build command
     cmd = build_llama_command(
         model_name=model_name,
@@ -1407,8 +1448,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     # Execute the command
     try:
-        # Use Popen to allow handling KeyboardInterrupt gracefully
-        proc = subprocess.Popen(cmd)
+        # Use Popen to allow handling KeyboardInterrupt gracefully. `cmd` is
+        # built internally by build_llama_command as a plain list of args; no
+        # shell=True, so nothing here ever interpolates through a shell.
+        proc = subprocess.Popen(cmd)  # noqa: S603
         try:
             return proc.wait()
         except KeyboardInterrupt:

@@ -57,7 +57,14 @@ select = [
     "E",   # pycodestyle errors (real bugs, not style)
     "F",   # pyflakes (undefined names, unused imports, etc.)
     "W",   # pycodestyle warnings
+    "S",   # bandit security: guards the subprocess/shell boundary, temp
+           # files and asserts so shell execution can't return by accident
 ]
 ignore = [
     "E501",  # line-too-long: ruff format owns line length
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use pytest's assert idiom (S101); fixtures deliberately use exposed
+# binds (S104) and /tmp paths (S108). Production code keeps the full set.
+"tests/*" = ["S101", "S104", "S108"]

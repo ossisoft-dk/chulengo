@@ -2096,6 +2096,38 @@ class TestAliases:
         base.update(kwargs)
         return argparse.Namespace(**base)
 
+    # --- _is_loopback_host ----------------------------------------------
+
+    @pytest.mark.parametrize(
+        ("host", "expected"),
+        [
+            # Loopback IPs and the localhost name.
+            ("127.0.0.1", True),
+            ("127.0.0.2", True),
+            ("127.255.255.254", True),
+            ("::1", True),
+            ("localhost", True),
+            ("LOCALHOST", True),
+            (" localhost ", True),
+            # UNIX socket paths never touch the network (llama --host).
+            ("/run/llama.sock", True),
+            ("/run/chulengo/model.sock", True),
+            # Multiple comma-separated addresses: all must be loopback.
+            ("127.0.0.1,::1", True),
+            ("0.0.0.0", False),
+            ("::", False),
+            ("192.168.1.10", False),
+            ("10.0.0.5", False),
+            ("myhost.local", False),
+            ("0.0.0.0,::1", False),
+            # Conservative by design: unclassified forms count as exposed.
+            ("[::1]", False),
+            ("localhost.", False),
+        ],
+    )
+    def test_is_loopback_host(self, host, expected):
+        assert chulengo._is_loopback_host(host) is expected
+
     # --- resolve_model_name ---------------------------------------------
 
     def test_resolve_repo_key_passthrough(self):
@@ -2230,6 +2262,35 @@ class TestAliases:
         assert "org/repo" not in settings["model_overrides"]
 
     # --- cmd_serve -------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        ("bind", "warns"),
+        [
+            ("0.0.0.0", True),
+            ("192.168.1.10", True),
+            ("/run/llama.sock", False),
+            ("127.0.0.1", False),
+            (None, False),
+        ],
+    )
+    def test_serve_bind_warning(self, mocker, capsys, bind, warns):
+        settings = {"defaults": {}, "model_overrides": {}}
+        mocker.patch.object(chulengo, "load_settings", return_value=settings)
+        mocker.patch.object(
+            chulengo,
+            "resolve_model_family",
+            return_value=chulengo.FamilyResolution({}, []),
+        )
+        mocker.patch.object(chulengo, "build_llama_command", return_value=["llama"])
+
+        ns = self._ns(model="org/repo", bind=bind, dry_run=True)
+
+        assert chulengo.cmd_serve(ns) == 0
+        captured = capsys.readouterr()
+        if warns:
+            assert f"Warning: --bind {bind} is not a loopback address" in captured.err
+        else:
+            assert "loopback" not in captured.err
 
     def test_serve_by_alias_resolves_repo_and_emits_alias(self, mocker):
         settings = {"defaults": {}, "model_overrides": {"org/repo": {"alias": "lfm"}}}

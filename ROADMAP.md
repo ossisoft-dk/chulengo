@@ -6,12 +6,7 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
 
 ## Next (near-term)
 
-- **Security hardening** (from the security review), in descending order of importance
-  - Keep GGUF parsing on untrusted input fail-fast — crafted cached GGUFs verified to fail quickly today; keep `gguf` current and add a lint guard (ruff `S` rules) so future edits can't reintroduce shell execution at the subprocess boundary.
-  - Belt-and-suspenders on network exposure — warn on stderr when `serve --bind` targets a non-loopback address (llama has no auth), on top of the documented note.
 - **Serving**
-  - `--bind` passthrough and a clear note about the default network exposure
-    of `llama serve`
   - `chulengo status` / `stop`: track the pid of a served model and stop it
     cleanly instead of relying on Ctrl+C in the original terminal
 - **Multi-GPU support** (GPU selection is currently fully implicit —
