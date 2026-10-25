@@ -2,6 +2,8 @@
 
 import argparse
 import os
+import signal
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
@@ -2537,6 +2539,194 @@ class TestServeJinja:
         """Test that --jinja turns jinja on even when the config has it off."""
         cmd = self._serve(mocker, ["--jinja"], config_jinja="off")
         assert "--jinja" in cmd
+
+
+class _FakeServeProc:
+    """Minimal stand-in for subprocess.Popen used by the lifecycle helpers.
+
+    Each ``wait`` call consumes the next entry of ``wait_behavior``: an int is
+    returned as the child's exit code, anything else is raised — so a test can
+    drive ``subprocess.TimeoutExpired`` exactly (for the in-grace wait) and
+    then hand the helper the code returned by the post-kill ``wait``.
+    """
+
+    def __init__(self, wait_behavior):
+        self._wait_behavior = list(wait_behavior)
+        self.wait_timeouts = []
+        self.terminate_count = 0
+        self.kill_count = 0
+
+    def wait(self, timeout=None):
+        self.wait_timeouts.append(timeout)
+        behavior = self._wait_behavior.pop(0)
+        if isinstance(behavior, int):
+            return behavior
+        raise behavior
+
+    def terminate(self):
+        self.terminate_count += 1
+
+    def kill(self):
+        self.kill_count += 1
+
+
+class TestServeLifecycle:
+    """Serve lifecycle: signal forwarding, graceful shutdown and SIGKILL
+    escalation (ROADMAP "No orphaned llama" slice)."""
+
+    @staticmethod
+    def _ns(**kwargs):
+        base = dict(
+            model=None,
+            port=None,
+            bind=None,
+            alias=None,
+            ctx_size=None,
+            flash_attn=None,
+            reasoning=None,
+            jinja=None,
+            spec_type=None,
+            cache_type_k=None,
+            cache_type_v=None,
+            chat_template_file=None,
+            target=None,
+            dry_run=False,
+        )
+        base.update(kwargs)
+        return argparse.Namespace(**base)
+
+    # --- _wait_for_server ------------------------------------------------
+
+    def test_wait_returns_child_exit_code_without_signal(self):
+        """No stop signal: the child's own exit code is returned and there is
+        no escalation."""
+        proc = _FakeServeProc([7])
+        assert chulengo._wait_for_server(proc, {"signum": None}) == 7
+        assert proc.kill_count == 0
+
+    def test_wait_retries_transient_timeouts_without_signal(self):
+        """A timeout while the child is still running is retried, then the
+        child's own exit code is returned."""
+        proc = _FakeServeProc(
+            [
+                subprocess.TimeoutExpired("llama", 0.2),
+                subprocess.TimeoutExpired("llama", 0.2),
+                3,
+            ]
+        )
+        assert chulengo._wait_for_server(proc, {"signum": None}) == 3
+        assert proc.kill_count == 0
+
+    def test_wait_graceful_stop_returns_128_plus_signal(self):
+        """After a stop signal the child exits within the grace period: the
+        wrapper reports the conventional 128 + signum (SIGTERM -> 143) and
+        never reaches SIGKILL."""
+        proc = _FakeServeProc([0])
+        status = chulengo._wait_for_server(proc, {"signum": signal.SIGTERM}, grace=5.0)
+        assert status == 143
+        assert proc.kill_count == 0
+
+    def test_wait_escalates_to_sigkill_after_grace(self, mocker, capsys):
+        """The child ignores a forwarded stop signal: SIGKILL once the grace
+        period is over, still reporting 128 + signum."""
+        proc = _FakeServeProc([9])  # returned by the wait() after kill()
+        # First monotonic() call sets the deadline (t=0, grace=5); the second
+        # reports t=10, already past the deadline -> escalate immediately.
+        mocker.patch.object(chulengo.time, "monotonic", side_effect=[0.0, 10.0])
+        status = chulengo._wait_for_server(proc, {"signum": signal.SIGTERM}, grace=5.0)
+        assert status == 143
+        assert proc.kill_count == 1
+        assert "forcing a SIGKILL" in capsys.readouterr().err
+
+    def test_wait_escalates_after_in_grace_wait_times_out(self, mocker):
+        """The child survives a full in-grace wait; the loop re-checks the
+        deadline and only then escalates to SIGKILL."""
+        proc = _FakeServeProc(
+            [
+                subprocess.TimeoutExpired("llama", 5.0),  # in-grace wait
+                9,  # returned by the wait() after kill()
+            ]
+        )
+        # Deadline set at t=0 (grace=5); t=0 leaves remaining=5 -> wait once,
+        # then t=10 is past the deadline -> escalate.
+        mocker.patch.object(chulengo.time, "monotonic", side_effect=[0.0, 0.0, 10.0])
+        status = chulengo._wait_for_server(proc, {"signum": signal.SIGTERM}, grace=5.0)
+        assert status == 143
+        assert proc.kill_count == 1
+
+    # --- _terminate_and_wait ---------------------------------------------
+
+    def test_terminate_and_wait_graceful(self):
+        """The child exits on SIGTERM within the grace period: no SIGKILL."""
+        proc = _FakeServeProc([0])
+        chulengo._terminate_and_wait(proc, grace=5.0)
+        assert proc.terminate_count == 1
+        assert proc.kill_count == 0
+
+    def test_terminate_and_wait_escalates(self):
+        """The child ignores SIGTERM: SIGKILL after the grace period."""
+        proc = _FakeServeProc(
+            [
+                subprocess.TimeoutExpired("llama", 5.0),
+                9,
+            ]
+        )
+        chulengo._terminate_and_wait(proc, grace=5.0)
+        assert proc.terminate_count == 1
+        assert proc.kill_count == 1
+
+    # --- cmd_serve wiring -------------------------------------------------
+
+    def test_serve_returns_child_exit_code(self, mocker):
+        """The wrapper's exit status is llama's own when no signal arrives."""
+        mocker.patch.object(
+            chulengo,
+            "load_settings",
+            return_value={"defaults": {}, "model_overrides": {}},
+        )
+        mocker.patch.object(
+            chulengo,
+            "resolve_model_family",
+            return_value=chulengo.FamilyResolution({}, []),
+        )
+        mocker.patch.object(chulengo, "build_llama_command", return_value=["llama"])
+        popen = mocker.patch("chulengo.subprocess.Popen")
+        popen.return_value.wait.return_value = 7
+
+        assert chulengo.cmd_serve(self._ns(model="org/repo")) == 7
+
+    def test_serve_installs_stop_signal_handlers(self, mocker):
+        """serve installs handlers for the forwarded stop signals so a bare
+        `kill <chulengo-pid>` does not orphan llama; the handlers are restored
+        afterwards so later tests see the process's normal dispositions."""
+        mocker.patch.object(
+            chulengo,
+            "load_settings",
+            return_value={"defaults": {}, "model_overrides": {}},
+        )
+        mocker.patch.object(
+            chulengo,
+            "resolve_model_family",
+            return_value=chulengo.FamilyResolution({}, []),
+        )
+        mocker.patch.object(chulengo, "build_llama_command", return_value=["llama"])
+        popen = mocker.patch("chulengo.subprocess.Popen")
+        popen.return_value.wait.return_value = 0
+
+        defaults = {s: signal.getsignal(s) for s in chulengo.FORWARDED_STOP_SIGNALS}
+        try:
+            assert chulengo.cmd_serve(self._ns(model="org/repo")) == 0
+            installed = {
+                s: signal.getsignal(s) for s in chulengo.FORWARDED_STOP_SIGNALS
+            }
+        finally:
+            for signum, handler in defaults.items():
+                signal.signal(signum, handler)
+
+        for signum in chulengo.FORWARDED_STOP_SIGNALS:
+            assert signal.getsignal(signum) == defaults[signum]  # restored
+            assert installed[signum] is not defaults[signum]  # serve replaced it
+            assert callable(installed[signum])
 
 
 if __name__ == "__main__":

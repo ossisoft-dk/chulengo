@@ -11,9 +11,11 @@ import ipaddress
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -1393,6 +1395,83 @@ def cmd_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+# Signals the wrapper forwards to the served llama subprocess when it receives
+# them itself — so a bare `kill <chulengo-pid>` (or SIGHUP/SIGQUIT) does not
+# orphan the server. SIGINT is deliberately absent: Python turns it into a
+# KeyboardInterrupt, which cmd_serve handles in its own stop path.
+FORWARDED_STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT)
+
+# How long to wait for the child to exit after a stop signal before escalating
+# to SIGKILL. Mirrors the historical Ctrl+C timeout in cmd_serve.
+SERVER_STOP_GRACE_SECS = 5.0
+
+# Poll cadence for the serve wait loop while no stop signal is pending.
+SERVE_WAIT_POLL_SECS = 0.2
+
+
+def _terminate_and_wait(
+    proc: subprocess.Popen, grace: float = SERVER_STOP_GRACE_SECS
+) -> None:
+    """Stop a live subprocess gracefully: SIGTERM, wait up to ``grace``
+    seconds, then escalate to SIGKILL.
+
+    This is the lifecycle helper the roadmap's upcoming ``chulengo stop`` (and
+    ``serve``'s Ctrl+C path) share, so the two never drift apart.
+    """
+    proc.terminate()
+    try:
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def _wait_for_server(
+    proc: subprocess.Popen,
+    stop: dict[str, int | None],
+    *,
+    grace: float = SERVER_STOP_GRACE_SECS,
+    poll: float = SERVE_WAIT_POLL_SECS,
+) -> int:
+    """Block until the served subprocess exits, returning the exit status.
+
+    ``stop`` is a one-entry dict whose ``signum`` key the signal handler sets
+    to the first forwarded termination signal. While it stays ``None``, return
+    the child's own exit code as soon as it exits (``wait`` sleeps efficiently
+    on the child's sentinel fd, so this loop is not a busy poll). Once a stop
+    signal arrives, give the child ``grace`` seconds to exit on its own, then
+    escalate to SIGKILL; either way the wrapper reports the conventional
+    ``128 + signum`` status for the signal it was asked to stop with.
+    """
+    deadline: float | None = None
+    while True:
+        if stop["signum"] is not None:
+            if deadline is None:
+                deadline = time.monotonic() + grace
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print(
+                    f"Server did not exit within {grace:.0f}s of receiving "
+                    f"{signal.Signals(stop['signum']).name}; forcing a SIGKILL.",
+                    file=sys.stderr,
+                )
+                proc.kill()
+                proc.wait()
+                return 128 + stop["signum"]
+            try:
+                proc.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                continue
+            return 128 + stop["signum"]
+        try:
+            rc = proc.wait(timeout=poll)
+        except subprocess.TimeoutExpired:
+            continue
+        if stop["signum"] is not None:
+            return 128 + stop["signum"]
+        return rc
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     """Serve a model with llama.cpp."""
     # Allow `serve <alias>` to resolve to the stored repo name.
@@ -1446,24 +1525,26 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     print(f"Running: {shlex.join(cmd)}")
 
+    # Mutable holder so the signal handler can record the first stop signal
+    # received and forward it, without needing to return through the interrupt.
+    stop: dict[str, int | None] = {"signum": None}
+
+    def _forward_stop_signal(signum, _frame):
+        """Forward SIGTERM/SIGHUP/SIGQUIT to llama so it can shut down
+        gracefully instead of being orphaned when the wrapper is killed."""
+        if stop["signum"] is None:
+            stop["signum"] = signum
+        try:
+            proc.send_signal(signum)
+        except ProcessLookupError:
+            pass  # llama already gone
+
     # Execute the command
     try:
-        # Use Popen to allow handling KeyboardInterrupt gracefully. `cmd` is
+        # Use Popen to allow graceful shutdown of the subprocess. `cmd` is
         # built internally by build_llama_command as a plain list of args; no
         # shell=True, so nothing here ever interpolates through a shell.
         proc = subprocess.Popen(cmd)  # noqa: S603
-        try:
-            return proc.wait()
-        except KeyboardInterrupt:
-            # Gracefully terminate the subprocess on Ctrl+C
-            print("\nInterrupted, stopping server...")
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-            return 130  # Standard exit code for SIGINT
     except FileNotFoundError:
         print(
             "Error: llama command not found. Please install llama.cpp.", file=sys.stderr
@@ -1472,6 +1553,27 @@ def cmd_serve(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+
+    # The child now exists, so every leave path below must stop it — a wrapper
+    # that dies must not orphan llama. Install the forwarding handlers
+    # (signal.signal is only callable on the main thread; main() dispatches
+    # cmd_serve there) and hand off to the shared wait loop.
+    for signum in FORWARDED_STOP_SIGNALS:
+        signal.signal(signum, _forward_stop_signal)
+
+    try:
+        return _wait_for_server(proc, stop)
+    except KeyboardInterrupt:
+        # Ctrl+C (SIGINT): stop the server the same way, then report the
+        # standard exit status for a process killed by SIGINT.
+        print("\nInterrupted, stopping server...")
+        _terminate_and_wait(proc)
+        return 130  # Standard exit code for SIGINT
+    except BaseException:
+        # Any other failure (or an unexpected exit below) must not orphan
+        # llama; stop it first, then re-raise so the caller still sees it.
+        _terminate_and_wait(proc)
+        raise
 
 
 def load_user_config() -> tuple[dict | None, str | None]:

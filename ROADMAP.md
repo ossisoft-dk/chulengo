@@ -8,10 +8,6 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
 
 - **Serving lifecycle** — the old `status` / `stop` item, split into small
   self-contained pieces (each a reviewable PR; roughly in order):
-  - **No orphaned llama**: forward SIGTERM/SIGHUP/SIGQUIT to the served
-    subprocess, wait for a graceful exit, and escalate to SIGKILL after a
-    timeout — mirroring the existing Ctrl+C path. Today a bare
-    `kill <chulengo-pid>` kills the wrapper but leaves llama running.
   - **Server registry (write)**: `serve` records pid + metadata (model,
     alias, port, start time, argv) to the state dir and removes the record
     on clean exit. Foreground behavior otherwise unchanged; no new commands.
