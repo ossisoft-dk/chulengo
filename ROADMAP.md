@@ -41,6 +41,41 @@ community feedback is welcome on [issues](https://github.com/ossisoft-dk/chuleng
 
 ## Later (ideas, not committed)
 
+- **Secure serve default: a global API key for exposed binds (`server:` config section)**
+  Chulengo gives an *exposed* `serve` an API key with zero user effort, while
+  keeping the default loopback path completely client-config-free:
+  - New top-level `server:` section in models.yaml (sibling of `defaults` /
+    `model_overrides`) holding a single global `api_key`; a natural home for
+    future serve-level knobs (e.g. a CORS default). Register `server` in
+    `VALID_TOP_LEVEL_KEYS`, validate it in `doctor_config` (mapping, known
+    keys only, non-empty string), and show presence — never the value — in
+    `chulengo show`. This is a config-section addition, not a per-family
+    setting, so the six-spot checklist does not apply end-to-end, but the
+    serve emission + doctor + show touches still need tests.
+  - Key resolution, consulted only when the bind is non-loopback (reuse
+    `_is_loopback_host`): `CHULENGO_API_KEY` env var → `server.api_key` →
+    lazy generation on the first exposed `serve` that finds neither (persist
+    to config; `--dry-run` must not generate or write). Loopback serves never
+    inject a key, even if one exists, so `curl http://localhost:...` needs
+    nothing.
+  - Pass the key to the child without putting it on the command line — the
+    planned server registry stores argv and `ps` exposes it — e.g. via
+    `LLAMA_API_KEY` in the subprocess env or `--api-key-file` with a 0600
+    file.
+  - Trade-off, accepted deliberately: on loopback llama.cpp's "no API key"
+    warning may still print (there is no loopback-only auth mode upstream).
+    Follow-up to check whether a restrictive `--cors-origins` silences it
+    without a key.
+  - Generation prints the key once with a ready-to-paste client snippet
+    (`Authorization: Bearer <key>`) so it can be shared with remote clients;
+    after that it is never echoed — `show`, `ls`, `doctor` and logs must not
+    leak it. Unwritable config dir with no env var → serve exposed anyway and
+    warn (the only case left where the old "no authentication" concern
+    applies).
+  - Rework the existing non-loopback `--bind` warning accordingly: once a key
+    is auto-injected on exposed binds, the permanent "API has no
+    authentication" text is obsolete.
+
 - **Daemonized serving**: `serve --background` (or a `start` verb) that
   spawns llama detached (`start_new_session`), captures output to a log,
   and returns immediately — so a server outlives the launching terminal
